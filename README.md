@@ -6,8 +6,8 @@ three-hour timebox, with the governance controls implemented deterministically
 rather than left to the language model.
 
 > **Status: in progress.** Scaffolding, contracts, the synthetic policy corpus,
-> local retrieval, the LLM abstraction and the Policy Agent are in place and tested.
-> The guardrail, the Risk and Response agents, the API and the UI are not implemented
+> local retrieval, the LLM abstraction and the Policy and Risk agents are in place and
+> tested. The guardrail, the Response agent, the API and the UI are not implemented
 > yet — see [Implementation sequence](#implementation-sequence).
 
 ---
@@ -58,7 +58,7 @@ Streamlit UI ──HTTP──▶ FastAPI  POST /ask
 |---|---|
 | Abstain rather than hallucinate | Top retrieval score below `RETRIEVAL_MIN_SCORE` short-circuits to abstain **before any LLM call**. The policy agent's own `answerable=false` is also honoured. |
 | Human review for consequential actions | A rule table is matched against the question and the proposed guidance (fee waiver, account closure, limit override, hold release, card unblock, customer-data disclosure). The rules are data, they are unit-tested, and the model cannot clear the flag. |
-| Risk escalation | `risk_level == "high"` forces `requires_human_review = True`. The risk agent can only raise the flag, never lower it. |
+| Risk escalation | The Risk Agent returns one of three statuses. `REJECTED` blocks the answer; `HUMAN_REVIEW_REQUIRED` forces review. Its deterministic rule pass can raise a status the model set, never lower it. |
 | Grounding | The response agent sees only retrieved excerpts. Citations are validated against known policy ids after generation; a fabricated id downgrades the result to an abstention. |
 
 The guardrail is a pattern rule table and will over-trigger. In a regulated context
@@ -76,7 +76,7 @@ that is the correct failure direction: over-escalation is safe, under-escalation
 │   ├── graph.py           # LangGraph wiring and GraphState (step 6)
 │   ├── api.py             # POST /ask, GET /health (step 7)
 │   ├── llm/               # provider abstraction — base, groq_client, stub (step 4)
-│   └── agents/            # policy (done), risk, response (step 5)
+│   └── agents/            # policy (done), risk (done), response (step 5)
 ├── data/                  # synthetic policy corpus (4 documents, done)
 ├── ui/                    # Streamlit app (step 8)
 └── tests/                 # pytest suite, runs offline against the stub provider
@@ -137,7 +137,7 @@ uv run streamlit run ui/streamlit_app.py   # UI  on :8501
 | 2 | Synthetic policy corpus and retrieval | done |
 | 3 | Deterministic guardrail and its tests | pending |
 | 4 | LLM abstraction: protocol, Groq client, stub | done |
-| 5 | Policy, Risk and Response agents | Policy Agent done; Risk and Response pending |
+| 5 | Policy, Risk and Response agents | Policy and Risk done; Response pending |
 | 6 | LangGraph wiring and end-to-end test | pending |
 | 7 | FastAPI endpoints | pending |
 | 8 | Streamlit UI | pending |

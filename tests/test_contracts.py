@@ -23,7 +23,7 @@ from app.contracts import (
     ResponseStatus,
     RetrievalResult,
     RiskAssessment,
-    RiskVerdict,
+    RiskStatus,
 )
 
 
@@ -40,30 +40,30 @@ def _evidence(**overrides) -> PolicyEvidence:
     )
 
 
-class TestRiskVerdict:
+class TestRiskStatus:
     def test_has_exactly_three_values(self):
         # The guardrail branches on this set. Adding a fourth verdict, or a numeric
         # scale, silently changes what happens to a consequential action.
-        assert [v.value for v in RiskVerdict] == [
+        assert [v.value for v in RiskStatus] == [
             "SAFE",
             "HUMAN_REVIEW_REQUIRED",
             "REJECTED",
         ]
 
-    def test_rejects_unknown_verdict(self):
+    def test_rejects_unknown_status(self):
         with pytest.raises(ValidationError):
-            RiskAssessment(verdict="LOW")
+            RiskAssessment(status="LOW")
 
     @pytest.mark.parametrize(
-        ("verdict", "blocks", "demands_review"),
+        ("status", "blocks", "demands_review"),
         [
-            (RiskVerdict.SAFE, False, False),
-            (RiskVerdict.HUMAN_REVIEW_REQUIRED, False, True),
-            (RiskVerdict.REJECTED, True, True),
+            (RiskStatus.SAFE, False, False),
+            (RiskStatus.HUMAN_REVIEW_REQUIRED, False, True),
+            (RiskStatus.REJECTED, True, True),
         ],
     )
-    def test_verdict_drives_downstream_behaviour(self, verdict, blocks, demands_review):
-        assessment = RiskAssessment(verdict=verdict)
+    def test_status_drives_downstream_behaviour(self, status, blocks, demands_review):
+        assessment = RiskAssessment(status=status)
         assert assessment.blocks_answer is blocks
         assert assessment.demands_review is demands_review
 
@@ -133,7 +133,7 @@ class TestRequestAndResponse:
             answer="Refer to a Team Leader before waiving the fee.",
             citations=[_evidence()],
             required_procedures=["Obtain Team Leader approval"],
-            risk=RiskAssessment(verdict=RiskVerdict.HUMAN_REVIEW_REQUIRED),
+            risk=RiskAssessment(status=RiskStatus.HUMAN_REVIEW_REQUIRED),
             guardrail=GuardrailDecision(
                 requires_human_review=True,
                 action_category=ActionCategory.CONSEQUENTIAL,
@@ -142,7 +142,7 @@ class TestRequestAndResponse:
             model="groq:llama-3.3-70b-versatile",
         )
         assert response.guardrail.requires_human_review is True
-        assert response.risk.verdict is RiskVerdict.HUMAN_REVIEW_REQUIRED
+        assert response.risk.status is RiskStatus.HUMAN_REVIEW_REQUIRED
         assert response.model
 
 

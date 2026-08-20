@@ -7,6 +7,7 @@ boundary rather than silently propagating into a staff-facing answer.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Literal
@@ -21,17 +22,44 @@ def _new_id() -> str:
     return uuid4().hex
 
 
-class RiskVerdict(str, Enum):
-    """The only verdicts the Risk Agent may return.
+class RiskStatus(str, Enum):
+    """The only statuses the Risk Agent may return.
 
     Deliberately three values, not a numeric score: each maps to exactly one
-    downstream behaviour, so the guardrail can act on the verdict without
+    downstream behaviour, so the guardrail can act on the status without
     interpreting a scale.
     """
 
     SAFE = "SAFE"
     HUMAN_REVIEW_REQUIRED = "HUMAN_REVIEW_REQUIRED"
     REJECTED = "REJECTED"
+
+    @property
+    def severity(self) -> int:
+        """Ordering used to combine findings. Risk only ever escalates."""
+        return _SEVERITY[self]
+
+    @classmethod
+    def most_severe(cls, statuses: "Iterable[RiskStatus]") -> "RiskStatus":
+        return max(statuses, key=lambda s: s.severity, default=cls.SAFE)
+
+
+_SEVERITY = {
+    RiskStatus.SAFE: 0,
+    RiskStatus.HUMAN_REVIEW_REQUIRED: 1,
+    RiskStatus.REJECTED: 2,
+}
+
+
+class RiskCategory(str, Enum):
+    """The risk types the Risk Agent is required to check for."""
+
+    UNSUPPORTED_CLAIM = "UNSUPPORTED_CLAIM"
+    CONSEQUENTIAL_ACTION = "CONSEQUENTIAL_ACTION"
+    UNSUPPORTED_GUARANTEE = "UNSUPPORTED_GUARANTEE"
+    PERSONAL_FINANCIAL_ADVICE = "PERSONAL_FINANCIAL_ADVICE"
+    APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
+    SENSITIVE_INFORMATION = "SENSITIVE_INFORMATION"
 
 
 class ActionCategory(str, Enum):
@@ -76,7 +104,7 @@ class PolicyEvidence(BaseModel):
     file on disk.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     policy_id: str = Field(min_length=1)
     title: str = Field(min_length=1)
@@ -138,23 +166,41 @@ class PolicyFinding(BaseModel):
         return bool(self.evidence) and bool(self.cited_policy_ids)
 
 
-class RiskAssessment(BaseModel):
-    """Risk Agent output: an independent review of the proposed guidance."""
+class RiskFlag(BaseModel):
+    """One identified risk, with the severity it carries on its own."""
 
     model_config = ConfigDict(extra="forbid")
 
-    verdict: RiskVerdict
-    concerns: list[str] = Field(default_factory=list)
-    missing_controls: list[str] = Field(default_factory=list)
-    rationale: str = ""
+    category: RiskCategory
+    detail: str = Field(min_length=1, description="What was found, in reviewer-readable terms")
+    severity: RiskStatus = RiskStatus.HUMAN_REVIEW_REQUIRED
+    source: Literal["deterministic", "model"] = "deterministic"
+
+
+class RiskAssessment(BaseModel):
+    """Risk Agent output: an independent review of the proposed guidance.
+
+    The Risk Agent reads the Policy Agent's output and never writes to it. This
+    model is its entire contribution to the request.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: RiskStatus
+    reason: str = Field(default="", description="Why this status was reached")
+    identified_risks: list[RiskFlag] = Field(default_factory=list)
 
     @property
     def blocks_answer(self) -> bool:
-        return self.verdict is RiskVerdict.REJECTED
+        return self.status is RiskStatus.REJECTED
 
     @property
     def demands_review(self) -> bool:
-        return self.verdict in (RiskVerdict.HUMAN_REVIEW_REQUIRED, RiskVerdict.REJECTED)
+        return self.status in (RiskStatus.HUMAN_REVIEW_REQUIRED, RiskStatus.REJECTED)
+
+    @property
+    def categories(self) -> list[RiskCategory]:
+        return list(dict.fromkeys(flag.category for flag in self.identified_risks))
 
 
 class GuardrailDecision(BaseModel):
