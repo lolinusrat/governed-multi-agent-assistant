@@ -232,13 +232,17 @@ status: PENDING_HUMAN_REVIEW   risk_status: HUMAN_REVIEW_REQUIRED   human_review
 Human review is required before you act on this. Approval must come from
 Fraud Operations Manager.
 
-Blocking the account is classified as "freezing or restricting an account" and,
-per FRAUD-ESC-002 §5.1, must be reviewed and approved by the Fraud Operations
-Manager before any action is taken.
+You cannot block the account immediately. Freezing or restricting an account
+beyond a card block requires review and approval by the Fraud Operations Manager
+(FRAUD-ESC-002 5.1). Record a fraud case within 30 minutes as required
+(FRAUD-ESC-002 3.3) before any containment action.
 
 next step 1: Obtain approval from Fraud Operations Manager before taking any action.
 sources:     FRAUD-ESC-002 §3, §5, §4
 ```
+
+The prose varies between runs because it is model-generated; the governed fields —
+`status`, `risk_status`, `human_review_required`, and the cited sources — do not.
 
 The approval authority is lifted from the `| action | authority |` table in the cited
 policy, not generated. The guardrail would have required review here even if the Risk

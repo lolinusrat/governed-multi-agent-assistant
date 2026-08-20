@@ -169,7 +169,15 @@ Several issues surfaced only by running the system rather than reasoning about i
   length normalisation, a proper stemmer, a wider window — addressed the measured cause.
   The first diagnosis was plausible and wrong, and only measurement separated them.
 - **An `UNSUPPORTED_CLAIM` false-rejection pattern** appeared in live runs before it
-  appeared in any test, because it depended on model variance across runs.
+  appeared in any test. It was initially written off as model variance. The audit trail
+  settled it: grouping logged runs by question digest showed the "can I block the
+  account" question returning `REJECTED` in 64% of runs, always with the same category,
+  which is a defect rather than variance. The cause was that the rule checking every
+  figure against the evidence treated a *section reference* — "(per FRAUD-ESC-002
+  section 5)" — as a numeric claim, because the evidence contained "5.1" but no bare
+  "5". The better the model cited its sources, the more likely it was to be rejected.
+  The observability built earlier in the exercise is what turned an anecdote into a
+  measurement.
 
 The pattern worth naming: the agent's confident explanations needed the same
 verification as its code.
