@@ -6,8 +6,8 @@ three-hour timebox, with the governance controls implemented deterministically
 rather than left to the language model.
 
 > **Status: in progress.** Scaffolding, contracts, the synthetic policy corpus,
-> local retrieval, the LLM abstraction, all three agents and the deterministic guardrail
-> are in place and tested. The LangGraph wiring, the API and the UI are not implemented
+> local retrieval, the LLM abstraction, all three agents, the deterministic guardrail and
+> the LangGraph workflow are in place and tested. The API and the UI are not implemented
 > yet — see [Implementation sequence](#implementation-sequence).
 
 ---
@@ -60,6 +60,7 @@ Streamlit UI ──HTTP──▶ FastAPI  POST /ask
 | Human review for consequential actions | A rule table is matched against the proposed guidance and procedures. In this demonstration the consequential actions are transferring funds, approving credit, closing an account and blocking an account. The rules are data, they are unit-tested, and no risk status can clear a match. |
 | Risk escalation | The Risk Agent returns one of three statuses. `REJECTED` blocks the answer; `HUMAN_REVIEW_REQUIRED` forces review. Its deterministic rule pass can raise a status the model set, never lower it. |
 | Grounding | The response agent sees only retrieved excerpts. Citations are validated against known policy ids after generation; a fabricated id downgrades the result to an abstention. |
+| Failure | If any stage raises, the workflow stops and returns status `UNAVAILABLE` with `human_review_required = True`. Checks that did not complete never read as checks that passed. |
 
 ### Why the important controls are deterministic
 
@@ -108,7 +109,7 @@ reviewer a minute, under-escalation costs a customer.
 │   ├── contracts.py       # all Pydantic contracts between agents (step 1)
 │   ├── retrieval.py       # policy parsing, keyword scoring, abstention (step 2)
 │   ├── guardrail.py       # deterministic consequential-action rules (step 3)
-│   ├── graph.py           # LangGraph wiring and GraphState (step 6)
+│   ├── graph.py           # LangGraph wiring, GraphState, error handling (step 6)
 │   ├── api.py             # POST /ask, GET /health (step 7)
 │   ├── llm/               # provider abstraction — base, groq_client, stub (step 4)
 │   └── agents/            # policy, risk, response (step 5, done)
@@ -173,7 +174,7 @@ uv run streamlit run ui/streamlit_app.py   # UI  on :8501
 | 3 | Deterministic guardrail and its tests | done |
 | 4 | LLM abstraction: protocol, Groq client, stub | done |
 | 5 | Policy, Risk and Response agents | done |
-| 6 | LangGraph wiring and end-to-end test | pending |
+| 6 | LangGraph wiring and end-to-end test | done |
 | 7 | FastAPI endpoints | pending |
 | 8 | Streamlit UI | pending |
 | 9 | Documentation pass | pending |

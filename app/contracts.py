@@ -89,6 +89,8 @@ class ResponseStatus(str, Enum):
     PENDING_HUMAN_REVIEW = "PENDING_HUMAN_REVIEW"
     ABSTAINED = "ABSTAINED"
     REJECTED = "REJECTED"
+    UNAVAILABLE = "UNAVAILABLE"
+    """A stage failed, so the governance checks did not complete. Fails closed."""
 
 
 class AbstainReason(str, Enum):
