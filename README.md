@@ -5,9 +5,9 @@ using a **synthetic** banking policy corpus. Built as a thin vertical slice unde
 three-hour timebox, with the governance controls implemented deterministically
 rather than left to the language model.
 
-> **Status: skeleton only.** Project scaffolding, dependencies and configuration are
-> in place. The agents, retrieval, guardrail, API and UI are not implemented yet —
-> see [Implementation sequence](#implementation-sequence).
+> **Status: in progress.** Scaffolding, contracts, the synthetic policy corpus and
+> local retrieval are in place and tested. The guardrail, agents, API and UI are not
+> implemented yet — see [Implementation sequence](#implementation-sequence).
 
 ---
 
@@ -70,7 +70,7 @@ that is the correct failure direction: over-escalation is safe, under-escalation
 ├── app/
 │   ├── config.py          # settings from environment (step 1)
 │   ├── contracts.py       # all Pydantic contracts between agents (step 1)
-│   ├── retrieval.py       # policy loading and scoring (step 2)
+│   ├── retrieval.py       # policy parsing, keyword scoring, abstention (step 2)
 │   ├── guardrail.py       # deterministic rules + risk escalation (step 3)
 │   ├── graph.py           # LangGraph wiring and GraphState (step 6)
 │   ├── api.py             # POST /ask, GET /health (step 7)
@@ -132,8 +132,8 @@ uv run streamlit run ui/streamlit_app.py   # UI  on :8501
 | # | Step | Status |
 |---|---|---|
 | 0 | Skeleton: `pyproject.toml`, `.gitignore`, `.env.example`, README, folders | done |
-| 1 | Contracts and configuration | pending |
-| 2 | Synthetic policy corpus and retrieval | corpus done, retrieval pending |
+| 1 | Contracts and configuration | done |
+| 2 | Synthetic policy corpus and retrieval | done |
 | 3 | Deterministic guardrail and its tests | pending |
 | 4 | LLM abstraction: protocol, Groq client, stub | pending |
 | 5 | Policy, Risk and Response agents | pending |
