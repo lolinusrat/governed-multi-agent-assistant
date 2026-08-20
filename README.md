@@ -6,9 +6,9 @@ three-hour timebox, with the governance controls implemented deterministically
 rather than left to the language model.
 
 > **Status: in progress.** Scaffolding, contracts, the synthetic policy corpus,
-> local retrieval, the LLM abstraction and the Policy and Risk agents are in place and
-> tested. The guardrail, the Response agent, the API and the UI are not implemented
-> yet — see [Implementation sequence](#implementation-sequence).
+> local retrieval, the LLM abstraction, the Policy and Risk agents and the deterministic
+> guardrail are in place and tested. The Response agent, the API and the UI are not
+> implemented yet — see [Implementation sequence](#implementation-sequence).
 
 ---
 
@@ -57,12 +57,47 @@ Streamlit UI ──HTTP──▶ FastAPI  POST /ask
 | Control | Mechanism |
 |---|---|
 | Abstain rather than hallucinate | Top retrieval score below `RETRIEVAL_MIN_SCORE` short-circuits to abstain **before any LLM call**. The policy agent's own `answerable=false` is also honoured. |
-| Human review for consequential actions | A rule table is matched against the question and the proposed guidance (fee waiver, account closure, limit override, hold release, card unblock, customer-data disclosure). The rules are data, they are unit-tested, and the model cannot clear the flag. |
+| Human review for consequential actions | A rule table is matched against the proposed guidance and procedures. In this demonstration the consequential actions are transferring funds, approving credit, closing an account and blocking an account. The rules are data, they are unit-tested, and no risk status can clear a match. |
 | Risk escalation | The Risk Agent returns one of three statuses. `REJECTED` blocks the answer; `HUMAN_REVIEW_REQUIRED` forces review. Its deterministic rule pass can raise a status the model set, never lower it. |
 | Grounding | The response agent sees only retrieved excerpts. Citations are validated against known policy ids after generation; a fabricated id downgrades the result to an abstention. |
 
-The guardrail is a pattern rule table and will over-trigger. In a regulated context
-that is the correct failure direction: over-escalation is safe, under-escalation is not.
+### Why the important controls are deterministic
+
+The agents are language models. They are useful because they generalise, and that
+is exactly why they cannot be the control: the same prompt can produce a different
+answer tomorrow, a persuasive question can talk one into agreeing, and nothing in
+the mechanism guarantees it will refuse when it should. Good behaviour most of the
+time is not a control.
+
+So the decisions that carry consequences are made by code instead:
+
+- **Abstention** is a retrieval score against a threshold, applied before the model
+  is called at all.
+- **Grounding** is set intersection: a policy id the retriever did not return is
+  discarded, whatever the model claims.
+- **Human review** is a rule table matched against the proposed guidance. The
+  Risk Agent's status is an input to that decision and can only ever add a reason
+  for review; it cannot remove one.
+
+This buys three things worth more here than accuracy:
+
+1. **It can be tested.** `requires_human_review` is asserted for every consequential
+   action phrasing crossed with every risk status the model can return — a claim
+   about all inputs, not a sample of them.
+2. **It can be explained.** Every escalation names the rule that fired and the
+   approval authority from the cited policy. "The model thought it was risky" is not
+   an audit trail.
+3. **It can be changed deliberately.** Adding a consequential action is an edit to an
+   enum and a rule table, reviewable in a diff, not a change in prompt wording whose
+   effect nobody can predict.
+
+[`app/guardrail.py`](app/guardrail.py) imports nothing from `app/llm/`, and a test
+parses the module to prove it. The guardrail cannot consult a model even by accident.
+
+The cost is false positives: the rule table over-triggers, and it deliberately does
+no negation handling, so guidance saying "do not close the account" still escalates.
+In a regulated context that is the correct direction — over-escalation costs a
+reviewer a minute, under-escalation costs a customer.
 
 ## Repository layout
 
@@ -72,7 +107,7 @@ that is the correct failure direction: over-escalation is safe, under-escalation
 │   ├── config.py          # settings from environment (step 1)
 │   ├── contracts.py       # all Pydantic contracts between agents (step 1)
 │   ├── retrieval.py       # policy parsing, keyword scoring, abstention (step 2)
-│   ├── guardrail.py       # deterministic rules + risk escalation (step 3)
+│   ├── guardrail.py       # deterministic consequential-action rules (step 3)
 │   ├── graph.py           # LangGraph wiring and GraphState (step 6)
 │   ├── api.py             # POST /ask, GET /health (step 7)
 │   ├── llm/               # provider abstraction — base, groq_client, stub (step 4)
@@ -135,7 +170,7 @@ uv run streamlit run ui/streamlit_app.py   # UI  on :8501
 | 0 | Skeleton: `pyproject.toml`, `.gitignore`, `.env.example`, README, folders | done |
 | 1 | Contracts and configuration | done |
 | 2 | Synthetic policy corpus and retrieval | done |
-| 3 | Deterministic guardrail and its tests | pending |
+| 3 | Deterministic guardrail and its tests | done |
 | 4 | LLM abstraction: protocol, Groq client, stub | done |
 | 5 | Policy, Risk and Response agents | Policy and Risk done; Response pending |
 | 6 | LangGraph wiring and end-to-end test | pending |

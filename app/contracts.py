@@ -62,6 +62,19 @@ class RiskCategory(str, Enum):
     SENSITIVE_INFORMATION = "SENSITIVE_INFORMATION"
 
 
+class ConsequentialAction(str, Enum):
+    """Actions that may never be taken on the assistant's say-so alone.
+
+    Scoped to the four in this demonstration. Adding one is a change to this
+    enum and to the rule table beside it - never a change to a prompt.
+    """
+
+    TRANSFER_FUNDS = "TRANSFER_FUNDS"
+    APPROVE_CREDIT = "APPROVE_CREDIT"
+    CLOSE_ACCOUNT = "CLOSE_ACCOUNT"
+    BLOCK_ACCOUNT = "BLOCK_ACCOUNT"
+
+
 class ActionCategory(str, Enum):
     """Whether the question seeks information or proposes to change something."""
 
@@ -204,15 +217,25 @@ class RiskAssessment(BaseModel):
 
 
 class GuardrailDecision(BaseModel):
-    """Deterministic control output. Produced by rules, never by a model."""
+    """Deterministic control output. Produced by rules, never by a model.
 
-    model_config = ConfigDict(extra="forbid")
+    `requires_human_review` is the binding field in the system. Nothing
+    downstream may recompute or relax it.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     requires_human_review: bool
     action_category: ActionCategory = ActionCategory.INFORMATIONAL
+    detected_actions: list[ConsequentialAction] = Field(default_factory=list)
     triggered_rules: list[str] = Field(default_factory=list)
     approval_authorities: list[str] = Field(default_factory=list)
     rationale: str = ""
+
+    @property
+    def permits_autonomous_execution(self) -> bool:
+        """True only when staff may act without a person reviewing first."""
+        return not self.requires_human_review
 
 
 class FinalResponse(BaseModel):
