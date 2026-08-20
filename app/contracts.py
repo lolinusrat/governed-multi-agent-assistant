@@ -13,7 +13,7 @@ from enum import Enum
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 StaffRole = Literal["branch_staff", "contact_centre", "operations"]
 
@@ -109,6 +109,15 @@ class AskRequest(BaseModel):
 
     question: str = Field(min_length=3, max_length=1000)
     staff_role: StaffRole = "branch_staff"
+
+    @field_validator("question")
+    @classmethod
+    def _must_carry_a_question(cls, value: str) -> str:
+        """Whitespace passes a length check but is not a question."""
+        stripped = value.strip()
+        if len(stripped) < 3:
+            raise ValueError("question must contain at least 3 non-whitespace characters")
+        return stripped
 
 
 class PolicyEvidence(BaseModel):

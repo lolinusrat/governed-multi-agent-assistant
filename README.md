@@ -6,9 +6,9 @@ three-hour timebox, with the governance controls implemented deterministically
 rather than left to the language model.
 
 > **Status: in progress.** Scaffolding, contracts, the synthetic policy corpus,
-> local retrieval, the LLM abstraction, all three agents, the deterministic guardrail and
-> the LangGraph workflow are in place and tested. The API and the UI are not implemented
-> yet — see [Implementation sequence](#implementation-sequence).
+> local retrieval, the LLM abstraction, all three agents, the deterministic guardrail,
+> the LangGraph workflow and the API are in place and tested. Only the Streamlit UI is
+> outstanding — see [Implementation sequence](#implementation-sequence).
 
 ---
 
@@ -110,7 +110,7 @@ reviewer a minute, under-escalation costs a customer.
 │   ├── retrieval.py       # policy parsing, keyword scoring, abstention (step 2)
 │   ├── guardrail.py       # deterministic consequential-action rules (step 3)
 │   ├── graph.py           # LangGraph wiring, GraphState, error handling (step 6)
-│   ├── api.py             # POST /ask, GET /health (step 7)
+│   ├── api.py             # POST /ask, GET /health (step 7, done)
 │   ├── llm/               # provider abstraction — base, groq_client, stub (step 4)
 │   └── agents/            # policy, risk, response (step 5, done)
 ├── data/                  # synthetic policy corpus (4 documents, done)
@@ -157,12 +157,23 @@ cp .env.example .env          # then add your GROQ_API_KEY
 uv run pytest                 # test suite (offline, uses the stub provider)
 ```
 
-Once the API and UI land (steps 7 and 8), two processes are run side by side:
+Run the API:
 
 ```bash
 uv run uvicorn app.api:app --reload        # API on :8000
-uv run streamlit run ui/streamlit_app.py   # UI  on :8501
 ```
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /health` | Liveness, how many policies loaded, which provider and model. Never credentials. |
+| `POST /ask` | `{"question": "...", "staff_role": "branch_staff"}` returns `request_id`, `answer`, `policy_sources`, `risk_status`, `human_review_required`, `status` and `recommended_next_steps`. |
+
+`POST /ask` returns 200 for an answer, abstention or rejection; 422 for invalid
+input, with field-level detail; and 503 when a stage failed — carrying the full
+governed body, because the caller needs to read "human review required" rather than
+just a status code. Stack traces and provider keys never appear in a response.
+
+The Streamlit UI (step 8) is not built yet.
 
 ## Implementation sequence
 
@@ -175,7 +186,7 @@ uv run streamlit run ui/streamlit_app.py   # UI  on :8501
 | 4 | LLM abstraction: protocol, Groq client, stub | done |
 | 5 | Policy, Risk and Response agents | done |
 | 6 | LangGraph wiring and end-to-end test | done |
-| 7 | FastAPI endpoints | pending |
+| 7 | FastAPI endpoints | done |
 | 8 | Streamlit UI | pending |
 | 9 | Documentation pass | pending |
 
