@@ -13,7 +13,7 @@ from enum import Enum
 from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 StaffRole = Literal["branch_staff", "contact_centre", "operations"]
 
@@ -239,19 +239,59 @@ class GuardrailDecision(BaseModel):
 
 
 class FinalResponse(BaseModel):
-    """Response Agent output as returned by the API and rendered by the UI."""
+    """What the API returns and the UI renders.
+
+    The governance fields are flat and authoritative: `risk_status` and
+    `human_review_required` are what a caller reads, and a validator refuses to
+    build a response whose flat fields disagree with the assessment and guardrail
+    decision they came from. A response that overrides the guardrail is not
+    something this contract can represent.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     trace_id: str = Field(default_factory=_new_id)
     status: ResponseStatus
-    answer: str
-    citations: list[PolicyEvidence] = Field(default_factory=list)
-    required_procedures: list[str] = Field(default_factory=list)
-    risk: RiskAssessment | None = None
-    guardrail: GuardrailDecision | None = None
+    answer: str = Field(min_length=1)
+    recommended_next_steps: list[str] = Field(default_factory=list)
+    policy_sources: list[PolicyEvidence] = Field(
+        default_factory=list, description="The policy sections the answer rests on"
+    )
+    risk_status: RiskStatus
+    human_review_required: bool
+
+    # Full decision record, for audit and for the UI to explain itself.
+    risk: RiskAssessment
+    guardrail: GuardrailDecision
     abstain_reason: AbstainReason | None = None
     model: str = Field(default="", description="Provider and model used, for explainability")
+
+    @model_validator(mode="after")
+    def _governance_fields_cannot_disagree(self) -> "FinalResponse":
+        if self.risk_status is not self.risk.status:
+            raise ValueError(
+                f"risk_status {self.risk_status.value} contradicts the assessment "
+                f"({self.risk.status.value})"
+            )
+        if self.human_review_required != self.guardrail.requires_human_review:
+            raise ValueError(
+                "human_review_required contradicts the guardrail decision "
+                f"({self.guardrail.requires_human_review})"
+            )
+        if self.status is ResponseStatus.ANSWERED:
+            if self.human_review_required:
+                raise ValueError("a response requiring human review cannot be ANSWERED")
+            if self.risk.blocks_answer:
+                raise ValueError("a rejected assessment cannot be ANSWERED")
+            if not self.policy_sources:
+                raise ValueError("an answered response must cite at least one policy source")
+        if self.status is ResponseStatus.ABSTAINED and self.abstain_reason is None:
+            raise ValueError("an abstention must say why")
+        return self
+
+    @property
+    def cited_policy_ids(self) -> list[str]:
+        return list(dict.fromkeys(s.policy_id for s in self.policy_sources))
 
 
 class AuditEvent(BaseModel):

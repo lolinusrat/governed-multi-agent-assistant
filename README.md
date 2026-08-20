@@ -6,9 +6,9 @@ three-hour timebox, with the governance controls implemented deterministically
 rather than left to the language model.
 
 > **Status: in progress.** Scaffolding, contracts, the synthetic policy corpus,
-> local retrieval, the LLM abstraction, the Policy and Risk agents and the deterministic
-> guardrail are in place and tested. The Response agent, the API and the UI are not
-> implemented yet — see [Implementation sequence](#implementation-sequence).
+> local retrieval, the LLM abstraction, all three agents and the deterministic guardrail
+> are in place and tested. The LangGraph wiring, the API and the UI are not implemented
+> yet — see [Implementation sequence](#implementation-sequence).
 
 ---
 
@@ -111,7 +111,7 @@ reviewer a minute, under-escalation costs a customer.
 │   ├── graph.py           # LangGraph wiring and GraphState (step 6)
 │   ├── api.py             # POST /ask, GET /health (step 7)
 │   ├── llm/               # provider abstraction — base, groq_client, stub (step 4)
-│   └── agents/            # policy (done), risk (done), response (step 5)
+│   └── agents/            # policy, risk, response (step 5, done)
 ├── data/                  # synthetic policy corpus (4 documents, done)
 ├── ui/                    # Streamlit app (step 8)
 └── tests/                 # pytest suite, runs offline against the stub provider
@@ -172,7 +172,7 @@ uv run streamlit run ui/streamlit_app.py   # UI  on :8501
 | 2 | Synthetic policy corpus and retrieval | done |
 | 3 | Deterministic guardrail and its tests | done |
 | 4 | LLM abstraction: protocol, Groq client, stub | done |
-| 5 | Policy, Risk and Response agents | Policy and Risk done; Response pending |
+| 5 | Policy, Risk and Response agents | done |
 | 6 | LangGraph wiring and end-to-end test | pending |
 | 7 | FastAPI endpoints | pending |
 | 8 | Streamlit UI | pending |

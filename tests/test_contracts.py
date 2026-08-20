@@ -123,16 +123,27 @@ class TestRequestAndResponse:
             AskRequest(question="")
 
     def test_final_response_generates_a_trace_id(self):
-        first = FinalResponse(status=ResponseStatus.ABSTAINED, answer="No policy covers this.")
-        second = FinalResponse(status=ResponseStatus.ABSTAINED, answer="No policy covers this.")
-        assert first.trace_id and first.trace_id != second.trace_id
+        def build():
+            return FinalResponse(
+                status=ResponseStatus.ABSTAINED,
+                answer="No policy covers this.",
+                abstain_reason=AbstainReason.NO_RELEVANT_POLICY,
+                risk_status=RiskStatus.SAFE,
+                human_review_required=False,
+                risk=RiskAssessment(status=RiskStatus.SAFE),
+                guardrail=GuardrailDecision(requires_human_review=False),
+            )
+
+        assert build().trace_id != build().trace_id
 
     def test_response_carries_the_full_decision_record(self):
         response = FinalResponse(
             status=ResponseStatus.PENDING_HUMAN_REVIEW,
             answer="Refer to a Team Leader before waiving the fee.",
-            citations=[_evidence()],
-            required_procedures=["Obtain Team Leader approval"],
+            recommended_next_steps=["Obtain Team Leader approval"],
+            policy_sources=[_evidence()],
+            risk_status=RiskStatus.HUMAN_REVIEW_REQUIRED,
+            human_review_required=True,
             risk=RiskAssessment(status=RiskStatus.HUMAN_REVIEW_REQUIRED),
             guardrail=GuardrailDecision(
                 requires_human_review=True,
@@ -143,6 +154,7 @@ class TestRequestAndResponse:
         )
         assert response.guardrail.requires_human_review is True
         assert response.risk.status is RiskStatus.HUMAN_REVIEW_REQUIRED
+        assert response.cited_policy_ids == ["CARD-DISP-001"]
         assert response.model
 
 
