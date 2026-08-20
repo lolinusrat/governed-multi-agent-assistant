@@ -41,6 +41,7 @@ from app.contracts import (
 )
 from app.guardrail import evaluate
 from app.llm.base import LLMClient, get_llm
+from app.observability import EventLog, ObservedRetriever, get_event_log, trace
 from app.retrieval import PolicyRetriever, get_retriever
 
 
@@ -108,16 +109,21 @@ def unavailable(state: GraphState, stage: str, exc: Exception) -> FinalResponse:
     )
 
 
-def _stage(name: str):
-    """Wrap a node so a failure stops the run cleanly instead of propagating."""
+def _stage(name: str, log: EventLog):
+    """Wrap a node with a lifecycle span and controlled failure handling.
+
+    Observability lives here, at the wiring, rather than inside the agents.
+    """
 
     def decorator(fn):
         def wrapped(state: GraphState) -> dict[str, Any]:
             if state.get("response") is not None:
                 return {}  # an earlier stage already produced a terminal response
             try:
-                return fn(state)
+                with log.span(name, name):
+                    return fn(state)
             except Exception as exc:  # noqa: BLE001 - the boundary is meant to be broad
+                log.emit(name, "decision", status="failed", error=f"{type(exc).__name__}: {exc}")
                 return {
                     "error": f"{name}: {exc}",
                     "response": unavailable(state, name, exc),
@@ -133,19 +139,30 @@ def _stage(name: str):
 
 
 def build_graph(
-    retriever: PolicyRetriever | None = None, llm: LLMClient | None = None
+    retriever: PolicyRetriever | None = None,
+    llm: LLMClient | None = None,
+    event_log: EventLog | None = None,
 ) -> "Any":
-    """Compile the workflow. Both dependencies are injectable for testing."""
-    retriever = retriever or get_retriever()
+    """Compile the workflow. Every dependency is injectable for testing."""
+    log = event_log or get_event_log()
+    retriever = ObservedRetriever(retriever or get_retriever(), log)
     llm = llm or get_llm()
 
     policy_agent = PolicyAgent(retriever=retriever, llm=llm)
     risk_agent = RiskAgent(llm=llm)
     response_agent = ResponseAgent(llm=llm)
 
-    @_stage("policy_agent")
+    @_stage("policy_agent", log)
     def policy_node(state: GraphState) -> dict[str, Any]:
         finding = policy_agent.run(_request(state))
+        log.emit(
+            "policy_agent",
+            "decision",
+            status="completed" if finding.answerable else "abstained",
+            cited_policy_ids=finding.cited_policy_ids,
+            abstain_reason=finding.abstain_reason.value if finding.abstain_reason else None,
+            procedure_count=len(finding.required_procedures),
+        )
         return {
             "finding": finding,
             "audit": [
@@ -160,9 +177,16 @@ def build_graph(
             ],
         }
 
-    @_stage("risk_agent")
+    @_stage("risk_agent", log)
     def risk_node(state: GraphState) -> dict[str, Any]:
         risk = risk_agent.review(_request(state), state["finding"])
+        log.emit(
+            "risk_agent",
+            "decision",
+            status=risk.status.value,
+            categories=[c.value for c in risk.categories],
+            risk_count=len(risk.identified_risks),
+        )
         return {
             "risk": risk,
             "audit": [
@@ -176,9 +200,24 @@ def build_graph(
             ],
         }
 
-    @_stage("guardrail")
+    @_stage("guardrail", log)
     def guardrail_node(state: GraphState) -> dict[str, Any]:
         decision = evaluate(state["finding"], state["risk"])
+        log.emit(
+            "guardrail",
+            "decision",
+            status=(
+                "consequential action detected"
+                if decision.detected_actions
+                else "human review required"
+                if decision.requires_human_review
+                else "no action detected"
+            ),
+            deterministic=True,
+            requires_human_review=decision.requires_human_review,
+            triggered_rules=decision.triggered_rules,
+            detected_actions=[a.value for a in decision.detected_actions],
+        )
         return {
             "guardrail": decision,
             "audit": [
@@ -197,12 +236,20 @@ def build_graph(
             ],
         }
 
-    @_stage("response_agent")
+    @_stage("response_agent", log)
     def response_node(state: GraphState) -> dict[str, Any]:
         response = response_agent.respond(
             _request(state), state["finding"], state["risk"], state["guardrail"]
         )
         response = response.model_copy(update={"trace_id": state["trace_id"]})
+        log.emit(
+            "response_agent",
+            "decision",
+            status=response.status.value,
+            human_review_required=response.human_review_required,
+            risk_status=response.risk_status.value,
+            source_count=len(response.policy_sources),
+        )
         return {
             "response": response,
             "audit": [
@@ -235,9 +282,12 @@ class GovernedAssistant:
     """The application. One question in, one governed response out."""
 
     def __init__(
-        self, retriever: PolicyRetriever | None = None, llm: LLMClient | None = None
+        self,
+        retriever: PolicyRetriever | None = None,
+        llm: LLMClient | None = None,
+        event_log: EventLog | None = None,
     ) -> None:
-        self.graph = build_graph(retriever=retriever, llm=llm)
+        self.graph = build_graph(retriever=retriever, llm=llm, event_log=event_log)
 
     def ask(
         self, question: str, staff_role: StaffRole = "branch_staff", trace_id: str | None = None
@@ -264,4 +314,5 @@ class GovernedAssistant:
             "error": None,
             "audit": [],
         }
-        return self.graph.invoke(initial)  # type: ignore[return-value]
+        with trace(initial["trace_id"]):
+            return self.graph.invoke(initial)  # type: ignore[return-value]

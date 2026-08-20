@@ -31,6 +31,18 @@ class Settings(BaseSettings):
 
     api_base_url: str = Field(default="http://127.0.0.1:8000", alias="API_BASE_URL")
 
+    observability_enabled: bool = Field(default=True, alias="OBSERVABILITY_ENABLED")
+    observability_file: Path = Field(default=Path("logs/events.jsonl"), alias="OBSERVABILITY_FILE")
+
+    @property
+    def observability_path(self) -> Path:
+        """Absolute path to the JSONL event log."""
+        return (
+            self.observability_file
+            if self.observability_file.is_absolute()
+            else PROJECT_ROOT / self.observability_file
+        )
+
     @property
     def policy_path(self) -> Path:
         """Absolute path to the policy corpus, resolved against the project root."""

@@ -111,6 +111,7 @@ reviewer a minute, under-escalation costs a customer.
 │   ├── guardrail.py       # deterministic consequential-action rules (step 3)
 │   ├── graph.py           # LangGraph wiring, GraphState, error handling (step 6)
 │   ├── api.py             # POST /ask, GET /health (step 7, done)
+│   ├── observability.py   # JSONL audit trail, kept out of the decision code
 │   ├── llm/               # provider abstraction — base, groq_client, stub (step 4)
 │   └── agents/            # policy, risk, response (step 5, done)
 ├── data/                  # synthetic policy corpus (4 documents, done)
@@ -135,6 +136,8 @@ cp .env.example .env
 | `RETRIEVAL_MIN_SCORE` | Abstention threshold for retrieval. |
 | `POLICY_DIR` | Location of the synthetic policy corpus (`data/`). |
 | `API_BASE_URL` | Base URL the Streamlit UI uses to reach the API. |
+| `OBSERVABILITY_ENABLED` | Write the JSONL audit trail. |
+| `OBSERVABILITY_FILE` | Where the trail is written (`logs/events.jsonl`, git-ignored). |
 
 ### Provider abstraction
 
@@ -193,6 +196,44 @@ The Streamlit UI (step 8) is not built yet.
 The guardrail and abstention logic are built before the agents deliberately. If the
 timebox runs out, the governance layer is complete and tested, and the model layer is
 what degrades.
+
+## Observability and audit
+
+Every request is given a `trace_id` in HTTP middleware, before any handler runs, and
+it is bound for the whole workflow. It comes back as the `request_id` in the body
+and as the `X-Request-ID` header, so a response in a screenshot ties to a line in
+the log.
+
+Events are appended one JSON object per line to `logs/events.jsonl`. Each carries
+`timestamp`, `trace_id`, `component`, `event`, `status`, and `latency_ms` where a
+duration is meaningful. Read one request back with `read_events(path, trace_id)` and
+`render_trace`:
+
+```
+a89813b7e33e4358ad11d5648c63df5c
+├── request received
+├── retrieval → FRAUD-ESC-002 §2
+├── retrieval → FRAUD-ESC-002 §4
+├── policy_agent → completed
+├── risk_agent → HUMAN_REVIEW_REQUIRED
+├── guardrail → consequential action detected
+├── response_agent → PENDING_HUMAN_REVIEW
+└── response returned
+```
+
+**What is not recorded.** The question text, the drafted answer and evidence
+excerpts never reach the file — a staff member may paste customer detail into a
+question, and the trail is not the place for it. A length and a short SHA-256 digest
+are kept instead, which is enough to correlate and to spot repeats. Every string
+value is passed through `redact()` on the way out, so a provider error quoting a
+credential cannot land in the log.
+
+**Kept out of the decision code.** Nothing in `app/agents/`, `app/guardrail.py`,
+`app/retrieval.py` or `app/contracts.py` imports the observability module, and a
+test parses those files to prove it. Instrumentation attaches at the wiring: a span
+around each graph node, an `ObservedRetriever` wrapping the retriever protocol, and
+one HTTP middleware. Writing the trail also cannot break a request — a full disk or
+an unwritable path is swallowed.
 
 ## Scope and limitations
 

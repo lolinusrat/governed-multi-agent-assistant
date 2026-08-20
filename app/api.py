@@ -20,11 +20,9 @@ Three things it does own:
 from __future__ import annotations
 
 import logging
-import re
 from contextlib import asynccontextmanager
+from time import perf_counter
 from typing import Any
-from uuid import uuid4
-
 from fastapi import Depends, FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -33,21 +31,19 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.config import Settings, get_settings
 from app.contracts import AbstainReason, AskRequest, FinalResponse, ResponseStatus, RiskStatus
 from app.graph import GovernedAssistant
+from app.observability import EventLog, digest, get_event_log, new_trace_id
+from app.observability import redact as _redact
+from app.observability import trace
 
 logger = logging.getLogger("governed_assistant.api")
 
 GENERIC_ERROR = "The assistant could not process this request."
 
-# Anything shaped like a provider key never leaves the process, whatever produced it.
-_KEY_SHAPED = re.compile(r"\b(?:gsk|sk|xai|ghp|github_pat)[-_][A-Za-z0-9_\-]{16,}\b")
-
 
 def redact(text: str, settings: Settings | None = None) -> str:
     """Strip the configured key and anything key-shaped from outgoing text."""
     settings = settings or get_settings()
-    if settings.groq_api_key and settings.groq_api_key in text:
-        text = text.replace(settings.groq_api_key, "[redacted]")
-    return _KEY_SHAPED.sub("[redacted]", text)
+    return _redact(text, settings.groq_api_key)
 
 
 # --------------------------------------------------------------------------- #
@@ -127,14 +123,17 @@ def to_wire(response: FinalResponse, request_id: str, settings: Settings) -> Ask
 # --------------------------------------------------------------------------- #
 
 
-def create_app(assistant: GovernedAssistant | None = None) -> FastAPI:
-    """Build the app. `assistant` is injectable so tests never touch a provider."""
+def create_app(
+    assistant: GovernedAssistant | None = None, event_log: EventLog | None = None
+) -> FastAPI:
+    """Build the app. Both dependencies are injectable so tests touch no provider."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         # Built once at startup: the corpus is parsed and the graph compiled here
         # rather than on the first request.
-        app.state.assistant = assistant or GovernedAssistant()
+        app.state.event_log = event_log or get_event_log()
+        app.state.assistant = assistant or GovernedAssistant(event_log=app.state.event_log)
         yield
 
     api = FastAPI(
@@ -147,6 +146,51 @@ def create_app(assistant: GovernedAssistant | None = None) -> FastAPI:
     def get_assistant(request: Request) -> GovernedAssistant:
         return request.app.state.assistant
 
+    @api.middleware("http")
+    async def _observe(request: Request, call_next):
+        """Mint the request id, bind it, and bracket the request with events.
+
+        Lives in middleware so no handler has to remember to do it, and so the
+        identifier exists before any handler code runs - including for a request
+        that fails validation and never reaches one.
+        """
+        log: EventLog = request.app.state.event_log
+        trace_id = new_trace_id()
+        request.state.trace_id = trace_id
+
+        with trace(trace_id):
+            log.emit(
+                "api",
+                "request_received",
+                status="ok",
+                trace_id=trace_id,
+                method=request.method,
+                path=request.url.path,
+            )
+            started = perf_counter()
+            try:
+                response = await call_next(request)
+            except Exception as exc:
+                log.emit(
+                    "api",
+                    "response_returned",
+                    status="error",
+                    trace_id=trace_id,
+                    latency_ms=(perf_counter() - started) * 1000,
+                    error=f"{type(exc).__name__}: {exc}",
+                )
+                raise
+            log.emit(
+                "api",
+                "response_returned",
+                status="ok" if response.status_code < 400 else "error",
+                trace_id=trace_id,
+                latency_ms=(perf_counter() - started) * 1000,
+                http_status=response.status_code,
+            )
+            response.headers["X-Request-ID"] = trace_id
+            return response
+
     @api.exception_handler(RequestValidationError)
     async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
         """Field-level feedback, with the offending input echoed back removed."""
@@ -157,14 +201,16 @@ def create_app(assistant: GovernedAssistant | None = None) -> FastAPI:
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             content=ErrorResponse(
-                request_id=uuid4().hex, error="The request was not valid.", detail=detail
+                request_id=getattr(request.state, "trace_id", None) or new_trace_id(),
+                error="The request was not valid.",
+                detail=detail,
             ).model_dump(),
         )
 
     @api.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
         """Last resort. The traceback goes to the log, never to the caller."""
-        request_id = uuid4().hex
+        request_id = getattr(request.state, "trace_id", None) or new_trace_id()
         logger.exception("unhandled error on %s (request_id=%s)", request.url.path, request_id)
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -200,6 +246,7 @@ def create_app(assistant: GovernedAssistant | None = None) -> FastAPI:
     )
     def ask(
         payload: AskRequest,
+        request: Request,
         assistant: GovernedAssistant = Depends(get_assistant),
         settings: Settings = Depends(get_settings),
     ) -> Any:
@@ -208,7 +255,17 @@ def create_app(assistant: GovernedAssistant | None = None) -> FastAPI:
         A degraded run returns 503 and still carries the full governed body: the
         caller needs to read "human review required", not just a status code.
         """
-        request_id = uuid4().hex
+        request_id = getattr(request.state, "trace_id", None) or new_trace_id()
+        log: EventLog = request.app.state.event_log
+        log.emit(
+            "api",
+            "question_accepted",
+            status="ok",
+            trace_id=request_id,
+            staff_role=payload.staff_role,
+            question_chars=len(payload.question),
+            question_digest=digest(payload.question),
+        )
         result = assistant.ask(
             payload.question, staff_role=payload.staff_role, trace_id=request_id
         )

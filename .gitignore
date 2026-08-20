@@ -14,6 +14,10 @@ venv/
 build/
 dist/
 
+# Local audit trail
+logs/
+*.jsonl
+
 # Tooling
 .pytest_cache/
 .ruff_cache/
