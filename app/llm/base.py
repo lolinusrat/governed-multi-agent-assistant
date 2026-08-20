@@ -45,6 +45,17 @@ def build_llm(settings: Settings | None = None) -> LLMClient:
 
         return StubLLMClient()
 
+    if settings.llm_provider == "nebius":
+        from app.llm.nebius_client import NebiusClient
+
+        if not settings.nebius_api_key:
+            raise LLMError("NEBIUS_API_KEY is not set; set it in .env or use LLM_PROVIDER=stub")
+        return NebiusClient(
+            api_key=settings.nebius_api_key,
+            model=settings.nebius_model,
+            base_url=settings.nebius_base_url,
+        )
+
     from app.llm.groq_client import GroqClient
 
     if not settings.groq_api_key:

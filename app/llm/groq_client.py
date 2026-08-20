@@ -7,23 +7,10 @@ the translation of SDK exceptions into `LLMError`.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
-from pydantic import ValidationError
-
 from app.llm.base import LLMError, T
-
-_JSON_INSTRUCTION = (
-    "Reply with a single JSON object and nothing else. No prose, no code fences. "
-    "It must validate against this JSON schema:\n{schema}"
-)
-
-_REPAIR_INSTRUCTION = (
-    "Your previous reply could not be parsed: {error}\n"
-    "Reply again with a single valid JSON object matching the schema exactly."
-)
-
+from app.llm.json_chat import Messages, structured_via_chat
 
 class GroqClient:
     """Calls Groq's chat completions API and validates the result into a model."""
@@ -54,36 +41,16 @@ class GroqClient:
         return f"groq:{self.model}"
 
     def structured(self, *, system: str, user: str, schema: type[T]) -> T:
-        instruction = _JSON_INSTRUCTION.format(
-            schema=json.dumps(schema.model_json_schema(), indent=2)
-        )
-        messages = [
-            {"role": "system", "content": f"{system}\n\n{instruction}"},
-            {"role": "user", "content": user},
-        ]
-
-        last_error: Exception | None = None
-        for attempt in range(self.max_attempts):
-            content = self._complete(messages)
-            try:
-                return schema.model_validate_json(content)
-            except (ValidationError, ValueError) as exc:
-                last_error = exc
-                # Temperature is zero, so a bare retry would return the same text.
-                # Feed the failure back instead.
-                if attempt + 1 < self.max_attempts:
-                    messages = [
-                        *messages,
-                        {"role": "assistant", "content": content},
-                        {"role": "user", "content": _REPAIR_INSTRUCTION.format(error=exc)},
-                    ]
-
-        raise LLMError(
-            f"Groq returned a response that does not match {schema.__name__} "
-            f"after {self.max_attempts} attempt(s): {last_error}"
+        return structured_via_chat(
+            self._complete,
+            system=system,
+            user=user,
+            schema=schema,
+            max_attempts=self.max_attempts,
+            provider="Groq",
         )
 
-    def _complete(self, messages: list[dict[str, str]]) -> str:
+    def _complete(self, messages: Messages) -> str:
         try:
             completion = self._client.chat.completions.create(
                 model=self.model,

@@ -23,7 +23,13 @@ class Settings(BaseSettings):
 
     groq_api_key: str = Field(default="", alias="GROQ_API_KEY")
     groq_model: str = Field(default="llama-3.3-70b-versatile", alias="GROQ_MODEL")
-    llm_provider: Literal["groq", "stub"] = Field(default="stub", alias="LLM_PROVIDER")
+    llm_provider: Literal["groq", "nebius", "stub"] = Field(default="stub", alias="LLM_PROVIDER")
+
+    nebius_api_key: str = Field(default="", alias="NEBIUS_API_KEY")
+    nebius_model: str = Field(default="meta-llama/Llama-3.3-70B-Instruct", alias="NEBIUS_MODEL")
+    nebius_base_url: str = Field(
+        default="https://api.studio.nebius.com/v1", alias="NEBIUS_BASE_URL"
+    )
 
     retrieval_min_score: float = Field(default=0.15, ge=0.0, le=1.0, alias="RETRIEVAL_MIN_SCORE")
     retrieval_max_results: int = Field(default=6, ge=1, le=20, alias="RETRIEVAL_MAX_RESULTS")
