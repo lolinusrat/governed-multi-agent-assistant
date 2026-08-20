@@ -76,7 +76,7 @@ that is the correct failure direction: over-escalation is safe, under-escalation
 │   ├── api.py             # POST /ask, GET /health (step 7)
 │   ├── llm/               # provider abstraction — base, groq_client, stub (step 4)
 │   └── agents/            # policy, risk, response (step 5)
-├── policies/              # synthetic policy corpus (step 2)
+├── data/                  # synthetic policy corpus (4 documents, done)
 ├── ui/                    # Streamlit app (step 8)
 └── tests/                 # pytest suite, runs offline against the stub provider
 ```
@@ -96,7 +96,7 @@ cp .env.example .env
 | `GROQ_MODEL` | Groq model id, e.g. `llama-3.3-70b-versatile`. |
 | `LLM_PROVIDER` | `groq` for real calls, `stub` for deterministic offline runs. |
 | `RETRIEVAL_MIN_SCORE` | Abstention threshold for retrieval. |
-| `POLICY_DIR` | Location of the synthetic policy corpus. |
+| `POLICY_DIR` | Location of the synthetic policy corpus (`data/`). |
 | `API_BASE_URL` | Base URL the Streamlit UI uses to reach the API. |
 
 ### Provider abstraction
@@ -133,7 +133,7 @@ uv run streamlit run ui/streamlit_app.py   # UI  on :8501
 |---|---|---|
 | 0 | Skeleton: `pyproject.toml`, `.gitignore`, `.env.example`, README, folders | done |
 | 1 | Contracts and configuration | pending |
-| 2 | Synthetic policy corpus and retrieval | pending |
+| 2 | Synthetic policy corpus and retrieval | corpus done, retrieval pending |
 | 3 | Deterministic guardrail and its tests | pending |
 | 4 | LLM abstraction: protocol, Groq client, stub | pending |
 | 5 | Policy, Risk and Response agents | pending |
@@ -150,7 +150,9 @@ what degrades.
 
 Declared rather than half-built, given the timebox:
 
-- **Synthetic policies only.** No real customer data, and none should ever be entered.
+- **Synthetic policies only.** The four documents in `data/` describe a fictional
+  institution, Meridian Retail Bank. They do not reproduce any real bank's policy.
+  No real customer data, and none should ever be entered.
 - **Keyword retrieval, not embeddings.** Deterministic and testable, but weak on
   synonyms. Mitigated by a small curated corpus plus the explicit abstain path.
   First thing to replace after the slice.
