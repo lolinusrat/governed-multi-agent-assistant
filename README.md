@@ -181,6 +181,43 @@ Running without a Groq key: set `LLM_PROVIDER=stub` and everything works offline
 the stub returns conservative defaults, so every question abstains. Useful for
 checking wiring, not for demonstrating behaviour.
 
+## Development performance baseline
+
+A small async script, no load-testing framework:
+
+```bash
+uv run python scripts/perf_baseline.py --requests 10 --concurrency 10
+uv run python scripts/perf_baseline.py --url http://127.0.0.1:8010 --json
+```
+
+It sends concurrent requests to `/ask` with `httpx` and reports successful requests,
+failures, average, p50 and p95 latency, broken down by outcome.
+
+**This is a development baseline, not proof of production capacity, and it sets no
+service level objective.** Single local process, no warm-up, uncontrolled network,
+sample sizes far too small for a percentile to mean what it usually means. At ten
+samples the p95 is essentially the maximum observed; it is reported because it is
+useful to see, not because it is statistically meaningful.
+
+Two measurements, kept separate because blending them would be misleading:
+
+| | concurrency | requests | successful | avg | p50 | p95 |
+|---|---|---|---|---|---|---|
+| **Application only** (`LLM_PROVIDER=stub`) | 10 | 10 | 10 | 18 ms | 18 ms | 20 ms |
+| **With Groq** (free-tier account) | 10 | 10 | 6 | 8,386 ms | 3,234 ms | 35,615 ms |
+
+The application itself — HTTP, retrieval, the guardrail, response composition and the
+audit trail — answers in tens of milliseconds under ten concurrent callers. Everything
+above that is the model provider. Abstained requests make no model call and complete in
+under 20 ms even on the live path; answered ones make three sequential calls.
+
+The four failures on the live run were **HTTP 429 rate limits from Groq**, surfaced as
+`503 UNAVAILABLE`. That is the provider throttling a free-tier key, not the application
+falling over, and it is worth reading as a successful test of the fail-closed path: each
+throttled request returned no answer, `human_review_required: true`, and no leaked
+credential. A production deployment would route through a model gateway with managed
+quota, which is where this constraint belongs.
+
 ## Example scenarios
 
 Real output from the running system, not illustrations.
