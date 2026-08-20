@@ -257,3 +257,86 @@ class TestSecretHygiene:
             payload = client.get(path).text.lower()
             assert "groq_api_key" not in payload
             assert "gsk_" not in payload
+
+
+class TestNoProviderDetailReachesStaff:
+    """A provider failure must not describe the provider.
+
+    A real Groq 429 names the organisation, the model, the service tier, the token
+    quota and a billing URL. None of that helps a member of staff decide what to do,
+    and all of it is internal infrastructure detail. This was a live defect: the raw
+    message was published in the answer, in `GET /trace`, and in the audit file.
+    """
+
+    GROQ_429 = (
+        "Groq request failed: Error code: 429 - {'error': {'message': \"Rate limit reached "
+        "for model `openai/gpt-oss-120b` in organization `org_01ktahdhwffbmtbph1d7rayk96` "
+        "service tier `on_demand` on tokens per day (TPD): Limit 200000, Used 199965. "
+        "Upgrade at https://console.groq.com/settings/billing\"}}"
+    )
+    TIMEOUT = "Groq request failed: ReadTimeout: timed out after 60s"
+
+    LEAKS = [
+        "org_01ktahdhwffbmtbph1d7rayk96",
+        "Limit 200000",
+        "console.groq.com",
+        "gpt-oss-120b",
+        "Error code: 429",
+        "tokens per day",
+        "on_demand",
+        "Groq",
+    ]
+
+    @pytest.mark.parametrize("message", [GROQ_429, TIMEOUT])
+    def test_the_response_carries_no_provider_detail(self, client_factory, message):
+        with client_factory(FailingLLMClient(message)) as c:
+            response = c.post("/ask", json={"question": COMPLAINT_QUESTION})
+        payload = response.text
+        assert response.status_code == 503
+        for leak in self.LEAKS:
+            assert leak not in payload, leak
+
+    @pytest.mark.parametrize("message", [GROQ_429, TIMEOUT])
+    def test_the_trace_endpoint_carries_no_provider_detail(self, client_factory, message):
+        with client_factory(FailingLLMClient(message)) as c:
+            request_id = c.post("/ask", json={"question": COMPLAINT_QUESTION}).json()["request_id"]
+            trace = c.get(f"/trace/{request_id}").text
+        for leak in self.LEAKS:
+            assert leak not in trace, leak
+
+    def test_the_audit_log_carries_a_cause_not_a_message(self, retriever):
+        from app.observability import EventLog
+
+        log = EventLog()
+        assistant = GovernedAssistant(retriever, FailingLLMClient(self.GROQ_429), event_log=log)
+        with TestClient(create_app(assistant, event_log=log)) as c:
+            c.post("/ask", json={"question": COMPLAINT_QUESTION})
+        records = json.dumps(log.records)
+        for leak in self.LEAKS:
+            assert leak not in records, leak
+        assert any(r.get("cause") == "rate_limited" for r in log.records)
+
+    def test_staff_still_get_something_actionable(self, client_factory):
+        # Removing the detail must not leave an unactionable message.
+        with client_factory(FailingLLMClient(self.GROQ_429)) as c:
+            body = c.post("/ask", json={"question": COMPLAINT_QUESTION}).json()
+        assert body["human_review_required"] is True
+        assert "over its request limit" in body["answer"]
+        assert "green light" in body["answer"]
+        assert body["request_id"][:8] in body["answer"]  # a reference to quote
+        assert any("Escalate" in step for step in body["recommended_next_steps"])
+
+    @pytest.mark.parametrize(
+        ("message", "cause"),
+        [
+            (GROQ_429, "rate_limited"),
+            (TIMEOUT, "timeout"),
+            ("Error code: 401 - invalid api key", "authentication"),
+            ("connection reset by peer", "unavailable"),
+        ],
+    )
+    def test_failures_are_classified_for_operators(self, retriever, message, cause):
+        from app.graph import classify_failure
+        from app.llm.base import LLMError
+
+        assert classify_failure(LLMError(message)) == cause
