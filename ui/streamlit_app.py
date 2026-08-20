@@ -37,6 +37,19 @@ STATUS_HELP = {
     "UNAVAILABLE": ("error", "The assistant could not complete its checks."),
 }
 
+# Statuses where no guidance was ever drafted. The risk status still exists on the
+# wire, but reporting it here would answer a question nobody asked: "SAFE" next to
+# "Abstained" reads as though the system judged the situation safe, when it means
+# there was no guidance to find fault with.
+NO_GUIDANCE_ISSUED = {"ABSTAINED", "UNAVAILABLE"}
+
+ABSTAIN_REASONS = {
+    "NO_RELEVANT_POLICY": "No relevant policy found",
+    "INSUFFICIENT_EVIDENCE": "Insufficient policy evidence",
+    "OUT_OF_POLICY_SCOPE": "The relevant policy states this topic is not covered",
+    "UNVERIFIABLE_CITATION": "The drafted guidance could not be traced to a policy source",
+}
+
 
 # --------------------------------------------------------------------------- #
 # API client - the only way this page gets data
@@ -93,16 +106,29 @@ def render_result(question: str, body: dict) -> None:
 
     status = body.get("status", "UNAVAILABLE")
     review = bool(body.get("human_review_required"))
+    guidance_issued = status not in NO_GUIDANCE_ISSUED
+    reason = ABSTAIN_REASONS.get(body.get("abstain_reason") or "", "")
 
-    left, right = st.columns(2)
-    left.metric("Risk status", body.get("risk_status", "—"))
-    right.metric("Human review", "Required" if review else "Not required")
+    outcome, risk_col, review_col = st.columns(3)
+    outcome.metric("Outcome", status.replace("_", " ").title())
+    risk_col.metric(
+        "Guidance risk", body.get("risk_status", "—") if guidance_issued else "N/A"
+    )
+    review_col.metric("Human review", "Required" if review else "Not required")
+
+    if not guidance_issued:
+        st.caption(
+            "Guidance risk is not applicable here — no guidance was issued, so there was "
+            "nothing for the risk review to assess."
+        )
 
     if review:
         st.warning("**Human review required.** Do not act on this until a person has approved it.")
 
     level, note = STATUS_HELP.get(status, ("info", status))
-    getattr(st, level)(f"**{status.replace('_', ' ').title()}** — {note}")
+    headline = status.replace("_", " ").title()
+    detail = f"{reason}." if reason else note
+    getattr(st, level)(f"**{headline}** — {detail}")
 
     st.caption("Answer")
     st.write(body.get("answer", ""))
