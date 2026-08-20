@@ -42,8 +42,10 @@ came from the engineer, not the agent:
 - that the guardrail must be independent of the LLM and that the LLM must not be able
   to override it
 - that the workflow stay a straight line, with no additional agents
-- that the API expose two endpoints, and that Streamlit call the API rather than
-  bypassing it
+- that the initial API stay minimal — `/health` and `/ask` — and that Streamlit call
+  the API rather than bypassing it. `/trace/{request_id}` was added later, and only
+  after the agent flagged that the alternative was having the UI read the log file
+  behind the API's back
 
 The agent's contribution at this layer was proposing options and implementing the
 decision. The constraints that make the system *governed* were specified by the
@@ -58,12 +60,12 @@ assuming it — importing every top-level dependency and running `pytest` to con
 collected zero tests cleanly.
 
 It also verified secret hygiene at this point by writing a throwaway `.env`, confirming
-git ignored it, and deleting it. That check mattered later.
+git ignored it, and deleting it.
 
 ## Implementation
 
-Built in nine steps, each explicitly gated by the engineer and each ending with a
-"stop when complete" instruction:
+Built in nine implementation steps after initial scaffolding, each explicitly gated by
+the engineer and each ending with a "stop when complete" instruction:
 
 | Step | Delivered |
 |---|---|
@@ -79,7 +81,8 @@ Built in nine steps, each explicitly gated by the engineer and each ending with 
 | 9 | Documentation |
 
 Roughly 3,200 lines of application code and 2,900 lines of tests. The agent wrote
-substantially all of it. Speed was the clear benefit: the guardrail rule table, the
+substantially all of it. Volume is not the claim being made here — the review section
+below describes a control with 98 passing tests and a demonstrable bypass. Speed was the clear benefit: the guardrail rule table, the
 BM25 scorer, the LangGraph wiring and the FastAPI layer were each produced in minutes
 rather than hours, which is what made a nine-step vertical slice feasible in the
 timebox at all.
@@ -194,15 +197,6 @@ before any code; approve the architecture; specify the governance semantics — 
 actions are consequential, which statuses exist, what may never be overridden; gate every
 implementation step; commission the review and choose which findings to act on within
 the remaining time; and remain accountable for what the system does.
-
-The clearest illustration of that boundary was the secret incident. A real Groq API key
-was committed into `.env.example` and GitHub's push protection rejected the push. The
-agent diagnosed it — identifying that the first two commits had succeeded and only the
-third was rejected, locating the key, moving it to a git-ignored `.env` and restoring the
-placeholder — and recommended rotating the key on the grounds that a blocked push still
-uploads the object to GitHub before rejection. **The engineer executed the history
-change and owns the rotation decision.** The agent's write access to git history was
-withheld by policy, which is the correct arrangement.
 
 Two things follow from this exercise that are worth stating plainly.
 

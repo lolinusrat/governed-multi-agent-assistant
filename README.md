@@ -157,9 +157,12 @@ stub keeps the whole test suite offline and free of API keys.
 uv run pytest
 ```
 
-**407 tests, offline, well under a second.** No API key, no network, no fixtures that
-reach a provider. Retrieval, the guardrail and the contracts run for real; only the
-model boundary is stubbed.
+The whole suite runs **offline** — no API key, no network, no fixture that reaches a
+provider — in well under a second. Retrieval, the guardrail and the contracts run for
+real; only the model boundary is stubbed. 407 tests at present, though the count is less
+interesting than the coverage: the guardrail is asserted across every action phrasing
+crossed with every risk status, and separately probed with phrasings its author did not
+choose.
 
 | File | Tests | Focus |
 |---|---|---|
@@ -293,8 +296,9 @@ not a control. Determinism buys three things worth more here than accuracy:
    enum and a rule table, reviewable in a diff.
 
 The cost is false positives. The rule table over-triggers, and it deliberately does no
-negation handling, so guidance saying "do not close the account" still escalates.
-Over-escalation costs a reviewer a minute; under-escalation costs a customer.
+negation handling, so guidance saying "do not close the account" still escalates. The
+trade-off deliberately favours over-escalation: unnecessary review has an operational
+cost, but under-escalation can create customer and risk impact.
 
 ## Observability and audit
 

@@ -82,8 +82,9 @@ than a change in prompt wording whose effect nobody can predict.
 prove it. The guardrail cannot consult a model even by accident.
 
 The cost is false positives: the rules over-trigger and deliberately do no negation
-handling, so "do not close the account" still escalates. Over-escalation costs a
-reviewer a minute; under-escalation costs a customer.
+handling, so "do not close the account" still escalates. The trade-off deliberately
+favours over-escalation: unnecessary review has an operational cost, but under-escalation
+can create customer and risk impact.
 
 ## Why unsupported questions abstain
 
@@ -110,9 +111,9 @@ the abstention path, so it is now decided before the model is consulted.
 
 ## Why synthetic Markdown policies
 
-**Synthetic** because the exercise forbids real customer data, and because a
-demonstration that quoted a real bank's policy would imply an authority it does not
-have. The corpus describes a fictional institution and says so at the top of every
+**Synthetic** because real customer or bank-confidential data was unnecessary and
+inappropriate for a demonstration repository, and because a demonstration that quoted a
+real bank's policy would imply an authority it does not have. The corpus describes a fictional institution and says so at the top of every
 document.
 
 **Markdown** because it parses with a regex, diffs in review, and is readable by the
@@ -214,9 +215,12 @@ governance change, not a tuning change.
 ### Model gateway
 
 Calls would go to an internal gateway rather than to Groq directly: central credential
-management, quota and cost attribution per team, rate limiting, prompt and response
-logging for compliance, model allow-listing, and a fallback when a model is
-decommissioned. This slice hit that last problem live — the configured model was
+management, quota and cost attribution per team, rate limiting, model allow-listing, a
+fallback when a model is decommissioned, and policy-controlled audit telemetry with —
+where permitted — appropriately protected content logging. Whether raw prompts and
+responses may be retained at all is a privacy decision, not a logging default, and it is
+the same decision this slice already makes by keeping question and answer text out of
+its own trail. This slice hit that last problem live — the configured model was
 retired mid-exercise — which is precisely the failure a gateway absorbs. `app/llm/` is
 the seam.
 
