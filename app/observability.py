@@ -82,6 +82,7 @@ class EventLog:
         self.enabled = enabled
         self.api_key = api_key
         self.records: list[dict[str, Any]] = []
+        self.max_records = 5000  # the in-memory tail is bounded; the file is the record
         self._lock = threading.Lock()
         if self.path is not None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -114,6 +115,8 @@ class EventLog:
 
         with self._lock:
             self.records.append(record)
+            if len(self.records) > self.max_records:
+                del self.records[: len(self.records) - self.max_records]
             if self.path is not None:
                 try:
                     with self.path.open("a", encoding="utf-8") as handle:
@@ -133,6 +136,17 @@ class EventLog:
             return value
 
         return {k: clean(v) for k, v in record.items()}
+
+    def events_for(self, trace_id: str) -> list[dict[str, Any]]:
+        """Every event recorded for one request, oldest first.
+
+        Prefers the file, which is the durable record; falls back to the
+        in-memory tail when the log is running without a path.
+        """
+        if self.path is not None and self.path.exists():
+            return read_events(self.path, trace_id)
+        with self._lock:
+            return [r for r in self.records if r.get("trace_id") == trace_id]
 
     @contextmanager
     def span(self, component: str, event: str, **fields: Any) -> Iterator[dict[str, Any]]:

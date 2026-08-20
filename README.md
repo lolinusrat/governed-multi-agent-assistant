@@ -5,10 +5,10 @@ using a **synthetic** banking policy corpus. Built as a thin vertical slice unde
 three-hour timebox, with the governance controls implemented deterministically
 rather than left to the language model.
 
-> **Status: in progress.** Scaffolding, contracts, the synthetic policy corpus,
+> **Status: complete.** Scaffolding, contracts, the synthetic policy corpus,
 > local retrieval, the LLM abstraction, all three agents, the deterministic guardrail,
-> the LangGraph workflow and the API are in place and tested. Only the Streamlit UI is
-> outstanding — see [Implementation sequence](#implementation-sequence).
+> the LangGraph workflow, the API and the Streamlit UI are in place and tested. The thin
+> vertical slice is complete — see [Implementation sequence](#implementation-sequence).
 
 ---
 
@@ -160,23 +160,28 @@ cp .env.example .env          # then add your GROQ_API_KEY
 uv run pytest                 # test suite (offline, uses the stub provider)
 ```
 
-Run the API:
+Run the two processes side by side:
 
 ```bash
-uv run uvicorn app.api:app --reload        # API on :8000
+uv run uvicorn app.api:app --reload         # API on :8000
+uv run streamlit run ui/streamlit_app.py    # UI  on :8501
 ```
+
+The UI reaches the API over HTTP at `API_BASE_URL` and holds no policy logic of its
+own, so anything it shows can be reproduced by calling the same endpoint.
 
 | Endpoint | Purpose |
 |---|---|
 | `GET /health` | Liveness, how many policies loaded, which provider and model. Never credentials. |
 | `POST /ask` | `{"question": "...", "staff_role": "branch_staff"}` returns `request_id`, `answer`, `policy_sources`, `risk_status`, `human_review_required`, `status` and `recommended_next_steps`. |
+| `GET /trace/{request_id}` | The audit trail for one request, so the UI can show an execution trace without reading the log file behind the API's back. |
 
 `POST /ask` returns 200 for an answer, abstention or rejection; 422 for invalid
 input, with field-level detail; and 503 when a stage failed — carrying the full
 governed body, because the caller needs to read "human review required" rather than
 just a status code. Stack traces and provider keys never appear in a response.
 
-The Streamlit UI (step 8) is not built yet.
+
 
 ## Implementation sequence
 
@@ -190,7 +195,7 @@ The Streamlit UI (step 8) is not built yet.
 | 5 | Policy, Risk and Response agents | done |
 | 6 | LangGraph wiring and end-to-end test | done |
 | 7 | FastAPI endpoints | done |
-| 8 | Streamlit UI | pending |
+| 8 | Streamlit UI | done |
 | 9 | Documentation pass | pending |
 
 The guardrail and abstention logic are built before the agents deliberately. If the

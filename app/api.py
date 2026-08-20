@@ -31,7 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.config import Settings, get_settings
 from app.contracts import AbstainReason, AskRequest, FinalResponse, ResponseStatus, RiskStatus
 from app.graph import GovernedAssistant
-from app.observability import EventLog, digest, get_event_log, new_trace_id
+from app.observability import EventLog, digest, get_event_log, new_trace_id, render_trace
 from app.observability import redact as _redact
 from app.observability import trace
 
@@ -77,6 +77,21 @@ class AskResponse(BaseModel):
     status: ResponseStatus
     recommended_next_steps: list[str] = Field(default_factory=list)
     abstain_reason: AbstainReason | None = None
+
+
+class TraceResponse(BaseModel):
+    """The audit trail for one request, as the UI reads it back.
+
+    Added beyond the original two endpoints so the UI can show an execution trace
+    without reading the log file behind the API's back. It publishes only what the
+    trail already holds - no question text, no answer text, no credentials.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str
+    events: list[dict[str, Any]] = Field(default_factory=list)
+    rendered: str = ""
 
 
 class ErrorResponse(BaseModel):
@@ -237,6 +252,26 @@ def create_app(
             policies_loaded=policies,
             llm_provider=settings.llm_provider,
             model=settings.groq_model if settings.llm_provider == "groq" else "stub",
+        )
+
+    @api.get(
+        "/trace/{request_id}",
+        response_model=TraceResponse,
+        responses={404: {"model": ErrorResponse}},
+    )
+    def get_trace(request_id: str, request: Request) -> Any:
+        """Read back the audit trail for one request."""
+        log: EventLog = request.app.state.event_log
+        events = log.events_for(request_id)
+        if not events:
+            return JSONResponse(
+                status_code=status.HTTP_404_NOT_FOUND,
+                content=ErrorResponse(
+                    request_id=request_id, error="No trace was found for that request id."
+                ).model_dump(),
+            )
+        return TraceResponse(
+            request_id=request_id, events=events, rendered=render_trace(events)
         )
 
     @api.post(
