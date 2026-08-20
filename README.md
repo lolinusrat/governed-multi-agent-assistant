@@ -206,10 +206,12 @@ Two measurements, kept separate because blending them would be misleading:
 | **Application only** (`LLM_PROVIDER=stub`) | 10 | 10 | 10 | 18 ms | 18 ms | 20 ms |
 | **With Groq** (free-tier account) | 10 | 10 | 6 | 8,386 ms | 3,234 ms | 35,615 ms |
 
-The application itself — HTTP, retrieval, the guardrail, response composition and the
-audit trail — answers in tens of milliseconds under ten concurrent callers. Everything
-above that is the model provider. Abstained requests make no model call and complete in
-under 20 ms even on the live path; answered ones make three sequential calls.
+The application-only baseline completes in tens of milliseconds under ten concurrent
+callers; in the live run, model-provider latency and throttling dominated end-to-end
+performance. The two rows are not identical execution conditions — the stub path
+abstains and makes no model call, while a live answered request makes three sequential
+ones — so read them as two separate measurements rather than one subtracted from the
+other. Abstained requests complete in under 20 ms even on the live path.
 
 The four failures on the live run were **HTTP 429 rate limits from Groq**, surfaced as
 `503 UNAVAILABLE`. That is the provider throttling a free-tier key, not the application
