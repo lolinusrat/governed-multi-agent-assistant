@@ -109,7 +109,16 @@ class RetrievalResult(BaseModel):
 
 
 class PolicyFinding(BaseModel):
-    """Policy Agent output: what the corpus says and what staff must do."""
+    """Policy Agent output: what the corpus says and what staff must do.
+
+    Self-contained on purpose. It carries the evidence it was built from, so a
+    reviewer can check the guidance against the cited sections without re-running
+    retrieval, and downstream stages never need to re-derive the citations.
+
+    It has no field for approving or authorising anything. The Policy Agent
+    reports what the policy requires; whether an action may proceed is decided by
+    the deterministic guardrail and, where required, a human.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -117,8 +126,16 @@ class PolicyFinding(BaseModel):
     proposed_guidance: str = ""
     required_procedures: list[str] = Field(default_factory=list)
     cited_policy_ids: list[str] = Field(default_factory=list)
+    evidence: list[PolicyEvidence] = Field(
+        default_factory=list, description="The retrieved sections the guidance rests on"
+    )
     abstain_reason: AbstainReason | None = None
     notes: str = ""
+
+    @property
+    def is_grounded(self) -> bool:
+        """True when every claim can be traced to at least one cited section."""
+        return bool(self.evidence) and bool(self.cited_policy_ids)
 
 
 class RiskAssessment(BaseModel):

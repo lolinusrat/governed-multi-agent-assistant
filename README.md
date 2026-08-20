@@ -5,9 +5,10 @@ using a **synthetic** banking policy corpus. Built as a thin vertical slice unde
 three-hour timebox, with the governance controls implemented deterministically
 rather than left to the language model.
 
-> **Status: in progress.** Scaffolding, contracts, the synthetic policy corpus and
-> local retrieval are in place and tested. The guardrail, agents, API and UI are not
-> implemented yet — see [Implementation sequence](#implementation-sequence).
+> **Status: in progress.** Scaffolding, contracts, the synthetic policy corpus,
+> local retrieval, the LLM abstraction and the Policy Agent are in place and tested.
+> The guardrail, the Risk and Response agents, the API and the UI are not implemented
+> yet — see [Implementation sequence](#implementation-sequence).
 
 ---
 
@@ -75,7 +76,7 @@ that is the correct failure direction: over-escalation is safe, under-escalation
 │   ├── graph.py           # LangGraph wiring and GraphState (step 6)
 │   ├── api.py             # POST /ask, GET /health (step 7)
 │   ├── llm/               # provider abstraction — base, groq_client, stub (step 4)
-│   └── agents/            # policy, risk, response (step 5)
+│   └── agents/            # policy (done), risk, response (step 5)
 ├── data/                  # synthetic policy corpus (4 documents, done)
 ├── ui/                    # Streamlit app (step 8)
 └── tests/                 # pytest suite, runs offline against the stub provider
@@ -135,8 +136,8 @@ uv run streamlit run ui/streamlit_app.py   # UI  on :8501
 | 1 | Contracts and configuration | done |
 | 2 | Synthetic policy corpus and retrieval | done |
 | 3 | Deterministic guardrail and its tests | pending |
-| 4 | LLM abstraction: protocol, Groq client, stub | pending |
-| 5 | Policy, Risk and Response agents | pending |
+| 4 | LLM abstraction: protocol, Groq client, stub | done |
+| 5 | Policy, Risk and Response agents | Policy Agent done; Risk and Response pending |
 | 6 | LangGraph wiring and end-to-end test | pending |
 | 7 | FastAPI endpoints | pending |
 | 8 | Streamlit UI | pending |
