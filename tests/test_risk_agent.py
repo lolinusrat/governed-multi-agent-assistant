@@ -273,3 +273,65 @@ class TestProviderFailure:
         risk_agent = RiskAgent(llm=FailingLLMClient("groq timed out"))
         with pytest.raises(LLMError, match="groq timed out"):
             risk_agent.review(QUESTION, finding())
+
+
+class TestSectionReferencesAreNotNumericClaims:
+    """A pointer to where a rule lives is not a claim about what the rule says.
+
+    This check exists because the opposite behaviour was observed in production-like
+    use: guidance citing "(per FRAUD-ESC-002 section 5)" was rejected as an
+    unsupported claim, because the evidence contained "5.1" but not a bare "5". The
+    better the model cited its sources, the more likely it was to be rejected —
+    punishing exactly the behaviour the rest of the system asks for.
+    """
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Submit the request to the manager (per CARD-DISP-001 section 5).",
+            "Approval is required under CARD-DISP-001 §5.1.",
+            "See section 3.3 for the containment steps.",
+            "Refer to sec. 7 of the policy.",
+            "As set out in clause 4.2, escalate the matter.",
+            "Handled under paragraph 6.1 of the policy.",
+        ],
+    )
+    def test_a_section_reference_is_not_flagged(self, text):
+        flags = assess_deterministically(finding(proposed_guidance=text))
+        assert RiskCategory.UNSUPPORTED_CLAIM not in {f.category for f in flags}, text
+
+    def test_a_section_reference_in_a_procedure_is_not_flagged(self):
+        flags = assess_deterministically(
+            finding(required_procedures=["Escalate to the manager (per CARD-DISP-001 section 5)"])
+        )
+        assert RiskCategory.UNSUPPORTED_CLAIM not in {f.category for f in flags}
+
+    @pytest.mark.parametrize(
+        ("text", "figure"),
+        [
+            ("Disputes must be lodged within 120 calendar days.", "120"),
+            ("Escalate anything above 9,999 AUD.", "9,999"),
+            ("A provisional credit applies up to 750 AUD.", "750"),
+        ],
+    )
+    def test_a_wrong_figure_is_still_rejected(self, text, figure):
+        # The control that matters is untouched: a plausible-but-wrong threshold or
+        # timeframe is the failure a reader cannot catch unaided.
+        flags = assess_deterministically(finding(proposed_guidance=text))
+        claim = next(f for f in flags if f.category is RiskCategory.UNSUPPORTED_CLAIM)
+        assert claim.severity is RiskStatus.REJECTED
+        assert figure in claim.detail
+
+    def test_a_real_figure_beside_a_section_reference_is_still_checked(self):
+        # Stripping the reference must not swallow the sentence around it.
+        flags = assess_deterministically(
+            finding(proposed_guidance="Act within 999 minutes (per CARD-DISP-001 section 3.3).")
+        )
+        claim = next(f for f in flags if f.category is RiskCategory.UNSUPPORTED_CLAIM)
+        assert "999" in claim.detail
+
+    def test_a_supported_figure_beside_a_section_reference_passes(self):
+        flags = assess_deterministically(
+            finding(proposed_guidance="Lodge within 90 calendar days (per CARD-DISP-001 section 3).")
+        )
+        assert RiskCategory.UNSUPPORTED_CLAIM not in {f.category for f in flags}

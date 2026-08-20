@@ -167,6 +167,21 @@ _NEGATION = re.compile(
 _NUMBER = re.compile(r"\b\d[\d,]*(?:\.\d+)?\b")
 _POLICY_ID = re.compile(r"\b[A-Z]{3,}-[A-Z]{3,}-\d+\b")
 
+# A pointer to where a rule lives is not a claim about what the rule says.
+# "…(per FRAUD-ESC-002 section 5)" cites section 5; it does not assert the number 5.
+# Without this, citing sources precisely makes rejection *more* likely, which
+# punishes exactly the behaviour the rest of the system asks for.
+_SECTION_REF = re.compile(
+    r"\b(?:sections?|secs?\.?|clauses?|paras?\.?|paragraphs?)\s*\d+(?:\.\d+)*"
+    r"|§\s*\d+(?:\.\d+)*",
+    re.I,
+)
+
+
+def _numeric_claims(text: str) -> list[str]:
+    """Figures the text asserts, with policy ids and section references removed."""
+    return _NUMBER.findall(_SECTION_REF.sub(" ", _POLICY_ID.sub(" ", text)))
+
 
 def _is_negated(text: str, start: int) -> bool:
     """True when the match sits inside a prohibition rather than an instruction."""
@@ -202,8 +217,8 @@ def _check_unsupported_numbers(finding: PolicyFinding) -> list[RiskFlag]:
         for e in finding.evidence
         for n in _NUMBER.findall(_POLICY_ID.sub(" ", e.text))
     }
-    claimed = _NUMBER.findall(_POLICY_ID.sub(" ", finding.proposed_guidance))
-    claimed += [n for step in finding.required_procedures for n in _NUMBER.findall(_POLICY_ID.sub(" ", step))]
+    claimed = _numeric_claims(finding.proposed_guidance)
+    claimed += [n for step in finding.required_procedures for n in _numeric_claims(step)]
 
     unsupported = [n for n in dict.fromkeys(claimed) if n.replace(",", "") not in evidence_numbers]
     if not unsupported:
