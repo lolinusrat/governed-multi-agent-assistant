@@ -282,3 +282,51 @@ class TestProviderFailure:
         agent = PolicyAgent(retriever=retriever, llm=FailingLLMClient("groq timed out"))
         with pytest.raises(LLMError, match="groq timed out"):
             agent.run(AskRequest(question=CARD_QUESTION))
+
+
+class TestOutOfScopeBackstop:
+    """Every policy ends with a section saying what it does not cover.
+
+    When that section is the best match, the corpus is telling us not to answer.
+    Leaving that to the model noticing it in the prompt was the weakest point in
+    the abstention path, so it is decided before the model is consulted.
+    """
+
+    TAX_QUESTION = "What is the tax treatment of a written-off disputed amount?"
+
+    def test_a_disowning_section_abstains_without_a_model_call(self, retriever):
+        llm = StubLLMClient()
+        finding = PolicyAgent(retriever=retriever, llm=llm).run(AskRequest(question=self.TAX_QUESTION))
+        assert finding.answerable is False
+        assert finding.abstain_reason is AbstainReason.OUT_OF_POLICY_SCOPE
+        assert llm.call_count == 0
+
+    def test_the_model_cannot_talk_the_backstop_out_of_abstaining(self, agent_factory):
+        # The model is never asked, so a confident answer has nowhere to enter.
+        agent = agent_factory(
+            [
+                PolicyDraft(
+                    answerable=True,
+                    out_of_scope=False,
+                    proposed_guidance="The written-off amount is treated as assessable income.",
+                    cited_policy_ids=["CARD-DISP-001"],
+                )
+            ]
+        )
+        finding = agent.run(AskRequest(question=self.TAX_QUESTION))
+        assert finding.answerable is False
+        assert finding.abstain_reason is AbstainReason.OUT_OF_POLICY_SCOPE
+        assert finding.proposed_guidance == ""
+
+    def test_the_abstention_names_the_section_that_disowned_it(self, retriever):
+        finding = PolicyAgent(retriever=retriever, llm=StubLLMClient()).run(
+            AskRequest(question=self.TAX_QUESTION)
+        )
+        assert "Matters not covered" in finding.notes
+        assert "policy owner" in finding.notes
+
+    def test_an_ordinary_question_is_unaffected(self, agent_factory):
+        agent = agent_factory(
+            [PolicyDraft(answerable=True, proposed_guidance="g", cited_policy_ids=["CARD-DISP-001"])]
+        )
+        assert agent.run(AskRequest(question=CARD_QUESTION)).answerable is True

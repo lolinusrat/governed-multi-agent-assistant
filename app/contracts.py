@@ -289,6 +289,9 @@ class FinalResponse(BaseModel):
                 "human_review_required contradicts the guardrail decision "
                 f"({self.guardrail.requires_human_review})"
             )
+        # Each terminal status has to be consistent with the decisions that
+        # produced it. Without this, `status` is the one governance field a later
+        # stage could still set freely.
         if self.status is ResponseStatus.ANSWERED:
             if self.human_review_required:
                 raise ValueError("a response requiring human review cannot be ANSWERED")
@@ -296,8 +299,24 @@ class FinalResponse(BaseModel):
                 raise ValueError("a rejected assessment cannot be ANSWERED")
             if not self.policy_sources:
                 raise ValueError("an answered response must cite at least one policy source")
-        if self.status is ResponseStatus.ABSTAINED and self.abstain_reason is None:
-            raise ValueError("an abstention must say why")
+        elif self.status is ResponseStatus.PENDING_HUMAN_REVIEW:
+            if not self.human_review_required:
+                raise ValueError(
+                    "PENDING_HUMAN_REVIEW requires human_review_required to be true"
+                )
+            if self.risk.blocks_answer:
+                raise ValueError("a rejected assessment cannot be PENDING_HUMAN_REVIEW")
+        elif self.status is ResponseStatus.REJECTED:
+            if not self.risk.blocks_answer:
+                raise ValueError("REJECTED requires a rejected risk assessment")
+        elif self.status is ResponseStatus.ABSTAINED:
+            if self.abstain_reason is None:
+                raise ValueError("an abstention must say why")
+            if self.policy_sources:
+                raise ValueError("an abstention must not cite a policy source")
+        elif self.status is ResponseStatus.UNAVAILABLE and not self.human_review_required:
+            # An incomplete run must never read as cleared.
+            raise ValueError("UNAVAILABLE must require human review")
         return self
 
     @property

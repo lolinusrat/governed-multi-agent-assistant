@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     llm_provider: Literal["groq", "stub"] = Field(default="stub", alias="LLM_PROVIDER")
 
     retrieval_min_score: float = Field(default=0.15, ge=0.0, le=1.0, alias="RETRIEVAL_MIN_SCORE")
-    retrieval_max_results: int = Field(default=4, ge=1, le=20, alias="RETRIEVAL_MAX_RESULTS")
+    retrieval_max_results: int = Field(default=6, ge=1, le=20, alias="RETRIEVAL_MAX_RESULTS")
     policy_dir: Path = Field(default=Path("data"), alias="POLICY_DIR")
 
     api_base_url: str = Field(default="http://127.0.0.1:8000", alias="API_BASE_URL")

@@ -12,6 +12,10 @@ allowed to say:
   call at all - there is nothing to draft when the answer must not be issued.
 * When human review is required, the response leads with a deterministic banner
   saying so, and the first recommended step is obtaining that review.
+* The composed answer is re-scanned with the guardrail's own rules before it is
+  published. The guardrail runs on the finding, so without this check the last
+  model in the chain could write an action into the answer that no control ever
+  saw. A draft that introduces one is discarded.
 * `FinalResponse` itself refuses to be constructed with governance fields that
   disagree with the assessment and guardrail decision they came from.
 """
@@ -31,7 +35,7 @@ from app.contracts import (
     ResponseStatus,
     RiskAssessment,
 )
-from app.guardrail import resolve_status
+from app.guardrail import resolve_status, scan
 from app.llm.base import LLMClient
 
 SYSTEM_PROMPT = """\
@@ -105,6 +109,18 @@ _AUTHORITY_CLAIMS = re.compile(
 )
 
 
+def _introduces_action(text: str, guardrail: GuardrailDecision) -> bool:
+    """True if the text proposes a consequential action the guardrail never cleared.
+
+    The guardrail decides on the Policy Agent's finding, which is the right input
+    for the decision but not the text staff read. Re-running the same rules over
+    the composed answer closes the gap between the two, using one rule table so
+    the two checks cannot drift apart.
+    """
+    cleared = set(guardrail.detected_actions)
+    return any(rule.action not in cleared for rule in scan(text))
+
+
 class ResponseDraft(BaseModel):
     """What the model is asked to return. Prose only - no governance fields."""
 
@@ -161,9 +177,9 @@ class ResponseAgent:
         )
 
         body = draft.answer.strip()
-        if not body or _AUTHORITY_CLAIMS.search(body):
+        if not body or _AUTHORITY_CLAIMS.search(body) or _introduces_action(body, guardrail):
             # Fall back to the policy guidance verbatim rather than correcting the
-            # model's claim: the guidance is already grounded and already reviewed.
+            # model's text: the guidance is already grounded and already reviewed.
             body = finding.proposed_guidance.strip()
 
         if guardrail.requires_human_review:

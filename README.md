@@ -35,7 +35,7 @@ Streamlit UI ──HTTP──▶ FastAPI  POST /ask
                 LangGraph — linear, 5 nodes
 
   1. retrieve         deterministic, no LLM
-                      keyword scoring over the synthetic policy corpus
+                      BM25-style scoring over the synthetic policy corpus
 
   2. policy_agent     LLM  — evidence → PolicyFindings
                       (required procedures, proposed guidance)
@@ -247,9 +247,12 @@ Declared rather than half-built, given the timebox:
 - **Synthetic policies only.** The four documents in `data/` describe a fictional
   institution, Meridian Retail Bank. They do not reproduce any real bank's policy.
   No real customer data, and none should ever be entered.
-- **Keyword retrieval, not embeddings.** Deterministic and testable, but weak on
-  synonyms. Mitigated by a small curated corpus plus the explicit abstain path.
-  First thing to replace after the slice.
+- **Keyword retrieval, not embeddings.** BM25-style scoring with length
+  normalisation and a crude stemmer, so `close` matches `closing` and a short
+  section that answers the question can outrank a long one that merely repeats its
+  words. Deterministic and testable, but still blind to synonyms — `card` will not
+  match `payment instrument`. Mitigated by a small curated corpus and the explicit
+  abstain path. First thing to replace after the slice.
 - **Risk agent independence is prompt-level, not process-level.** A separate call with
   a separate system prompt and a restricted view — not a separate model or provider.
 - **Audit trail is a `trace_id` and a structured log line**, not a persisted store. The

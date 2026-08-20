@@ -257,3 +257,53 @@ class TestScan:
     def test_scan_is_a_pure_function_over_text(self):
         assert [r.name for r in scan("Close the account.")] == ["close_account"]
         assert scan("Acknowledge the complaint.") == []
+
+
+class TestAdversarialPhrasing:
+    """The rules must survive the way a model actually writes.
+
+    The tables above use the active voice a rule author reaches for first. Model
+    prose is full of passive and nominalised constructions, and a rule that only
+    matches "close the account" is a rule that misses "the account will be closed".
+    """
+
+    @pytest.mark.parametrize(
+        ("phrase", "action"),
+        [
+            # passive
+            ("The account will be closed once the form is signed.", ConsequentialAction.CLOSE_ACCOUNT),
+            ("The customer's account should be closed.", ConsequentialAction.CLOSE_ACCOUNT),
+            ("The account is to be frozen pending the investigation.", ConsequentialAction.BLOCK_ACCOUNT),
+            ("Arrange for the funds to be transferred to the new account.", ConsequentialAction.TRANSFER_FUNDS),
+            ("The disputed amount will be credited to the customer.", ConsequentialAction.TRANSFER_FUNDS),
+            ("The credit limit increase can be approved at the counter.", ConsequentialAction.APPROVE_CREDIT),
+            ("The overdraft was granted this morning.", ConsequentialAction.APPROVE_CREDIT),
+            # nominalised
+            ("Proceed with the closure of the account.", ConsequentialAction.CLOSE_ACCOUNT),
+            ("Place a freeze on the account.", ConsequentialAction.BLOCK_ACCOUNT),
+            # informal
+            ("Terminate the relationship and shut the account down.", ConsequentialAction.CLOSE_ACCOUNT),
+            ("Send the money to the customer's nominated account.", ConsequentialAction.TRANSFER_FUNDS),
+            ("Pay the funds across today.", ConsequentialAction.TRANSFER_FUNDS),
+        ],
+    )
+    def test_indirect_phrasings_are_still_caught(self, phrase, action):
+        decision = evaluate(finding(phrase), SAFE_RISK)
+        assert decision.requires_human_review is True, phrase
+        assert action in decision.detected_actions, phrase
+
+    @pytest.mark.parametrize(
+        "phrase",
+        [
+            "Record the dispute in the disputes system within one business day.",
+            "Tell the customer the assessment window is 21 calendar days.",
+            "Acknowledge the complaint within one business day.",
+            "Verify the customer's identity before discussing transaction detail.",
+            "Record a fraud case in the case management system within 30 minutes.",
+            "Explain the customer's right to go to the external dispute resolution scheme.",
+        ],
+    )
+    def test_the_wider_patterns_do_not_swallow_ordinary_guidance(self, phrase):
+        # Broadening the rules must not turn every procedural sentence into an
+        # escalation, or staff will learn to ignore the flag.
+        assert evaluate(finding(phrase), SAFE_RISK).detected_actions == []

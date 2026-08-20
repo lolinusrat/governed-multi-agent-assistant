@@ -136,22 +136,51 @@ _STOPWORDS = frozenset(
 
 _TOKEN = re.compile(r"[a-z0-9]+")
 
-# Query saturation constant: a term occurring three times in a section is treated
-# as fully matched. Keeps scores comparable across long and short sections.
-_TF_SATURATION = 1.0 + math.log(3.0)
+# BM25 term-frequency parameters. `k1` saturates repeated terms so a long section
+# cannot win on repetition alone; `b` normalises by section length so a four-line
+# section that answers the question can outrank a long procedural one that merely
+# mentions the same words. Both are the standard defaults.
+_K1 = 1.2
+_B = 0.75
 _HEADING_BOOST = 1.5
 
 
+def stem(token: str) -> str:
+    """Reduce a word to a crude stem so inflections of it match each other.
+
+    Not a real stemmer, and it does not need to be. It exists so that a question
+    asking to "close" an account matches a policy that says "closing", and one
+    asking to "lodge" a dispute matches "lodged". Without it the retriever misses
+    the section holding the answer while happily returning the one that repeats
+    the question's easy words.
+
+    Verb and plural endings are stripped, then a trailing "e", so close/closed/
+    closing all reduce to "clos". Words ending "ss" are left alone.
+    """
+    if len(token) <= 3 or token.isdigit():
+        return token
+    if token.endswith("ies") and len(token) > 4:
+        return token[:-3] + "y"
+    if token.endswith("ss"):
+        return token
+    if token.endswith("s"):
+        token = token[:-1]
+    if token.endswith("ing") and len(token) > 5:
+        token = token[:-3]
+    elif token.endswith("ed") and len(token) > 4:
+        token = token[:-2]
+    if token.endswith("e") and len(token) > 4:
+        token = token[:-1]
+    return token
+
+
 def tokenize(text: str) -> list[str]:
-    """Lowercase, split, drop stopwords, and crudely singularise."""
-    tokens = []
-    for token in _TOKEN.findall(text.lower()):
-        if token in _STOPWORDS or (len(token) < 3 and not token.isdigit()):
-            continue
-        if len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
-            token = token[:-1]
-        tokens.append(token)
-    return tokens
+    """Lowercase, split, drop stopwords, and stem what is left."""
+    return [
+        stem(token)
+        for token in _TOKEN.findall(text.lower())
+        if token not in _STOPWORDS and (len(token) >= 3 or token.isdigit())
+    ]
 
 
 def _excerpt(text: str, limit: int = MAX_EXCERPT_CHARS) -> str:
@@ -168,13 +197,14 @@ def _excerpt(text: str, limit: int = MAX_EXCERPT_CHARS) -> str:
 class _Chunk:
     """A searchable unit: one section, with its parent document's metadata."""
 
-    __slots__ = ("doc", "section", "counts", "heading_terms")
+    __slots__ = ("doc", "section", "counts", "heading_terms", "length")
 
     def __init__(self, doc: PolicyDocument, section: PolicySection) -> None:
         self.doc = doc
         self.section = section
         self.counts = Counter(tokenize(section.text))
         self.heading_terms = set(tokenize(f"{doc.title} {section.heading}"))
+        self.length = sum(self.counts.values())
 
 
 @runtime_checkable
@@ -201,14 +231,17 @@ class KeywordPolicyRetriever:
         documents: list[PolicyDocument],
         *,
         min_score: float = 0.15,
-        max_results: int = 4,
-        max_per_policy: int = 2,
+        max_results: int = 6,
+        max_per_policy: int = 3,
     ) -> None:
         self.documents = documents
         self.min_score = min_score
         self.max_results = max_results
         self.max_per_policy = max_per_policy
         self._chunks = [_Chunk(doc, s) for doc in documents for s in doc.sections]
+        self._avg_length = (
+            sum(c.length for c in self._chunks) / len(self._chunks) if self._chunks else 1.0
+        ) or 1.0
         self._idf = self._build_idf()
 
     def _build_idf(self) -> dict[str, float]:
@@ -222,14 +255,22 @@ class KeywordPolicyRetriever:
         return self._idf.get(term, math.log(1.0 + len(self._chunks)))
 
     def _score(self, chunk: _Chunk, query_terms: list[str], budget: float) -> float:
+        """Share of the query's information content this section matches, 0-1.
+
+        A term unseen anywhere in the corpus contributes nothing to the numerator
+        but keeps its full weight in `budget`, so a question the policies do not
+        cover scores toward zero and the abstention threshold does the rest.
+        """
         if budget <= 0:
             return 0.0
+        norm = 1.0 - _B + _B * (chunk.length / self._avg_length)
         earned = 0.0
         for term in query_terms:
             tf = chunk.counts.get(term, 0)
             if tf == 0:
                 continue
-            weight = min(1.0 + math.log(tf), _TF_SATURATION) / _TF_SATURATION
+            # BM25 saturation, rescaled to 0-1 so `earned / budget` stays a share.
+            weight = (tf * (_K1 + 1.0)) / (tf + _K1 * norm) / (_K1 + 1.0)
             if term in chunk.heading_terms:
                 weight = min(1.0, weight * _HEADING_BOOST)
             earned += self._idf_of(term) * weight

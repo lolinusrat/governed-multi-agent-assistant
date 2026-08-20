@@ -18,4 +18,4 @@ def corpus() -> list[PolicyDocument]:
 
 @pytest.fixture()
 def retriever(corpus: list[PolicyDocument]) -> KeywordPolicyRetriever:
-    return KeywordPolicyRetriever(corpus, min_score=0.15, max_results=4)
+    return KeywordPolicyRetriever(corpus, min_score=0.15)

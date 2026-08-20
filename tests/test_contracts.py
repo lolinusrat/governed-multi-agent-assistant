@@ -185,3 +185,71 @@ class TestAuditEvent:
         rule = AuditEvent(trace_id="abc", stage="guardrail", deterministic=True)
         model = AuditEvent(trace_id="abc", stage="risk_agent", deterministic=False)
         assert rule.deterministic and not model.deterministic
+
+
+class TestStatusInvariants:
+    """`status` must agree with the decisions that produced it.
+
+    Without these, `status` was the one governance field a later stage could set
+    freely: the flat flags were validated against their sources but the terminal
+    status was not.
+    """
+
+    def _kwargs(self, **overrides):
+        base = {
+            "answer": "text",
+            "policy_sources": [_evidence()],
+            "risk_status": RiskStatus.SAFE,
+            "human_review_required": False,
+            "risk": RiskAssessment(status=RiskStatus.SAFE),
+            "guardrail": GuardrailDecision(requires_human_review=False),
+        }
+        return {**base, **overrides}
+
+    def test_pending_review_requires_the_review_flag(self):
+        with pytest.raises(ValidationError, match="PENDING_HUMAN_REVIEW requires"):
+            FinalResponse(status=ResponseStatus.PENDING_HUMAN_REVIEW, **self._kwargs())
+
+    def test_pending_review_cannot_follow_a_rejection(self):
+        with pytest.raises(ValidationError, match="cannot be PENDING_HUMAN_REVIEW"):
+            FinalResponse(
+                status=ResponseStatus.PENDING_HUMAN_REVIEW,
+                **self._kwargs(
+                    risk_status=RiskStatus.REJECTED,
+                    risk=RiskAssessment(status=RiskStatus.REJECTED),
+                    human_review_required=True,
+                    guardrail=GuardrailDecision(requires_human_review=True),
+                ),
+            )
+
+    def test_rejected_requires_a_rejecting_assessment(self):
+        with pytest.raises(ValidationError, match="REJECTED requires"):
+            FinalResponse(status=ResponseStatus.REJECTED, **self._kwargs())
+
+    def test_an_abstention_cannot_cite_a_source(self):
+        with pytest.raises(ValidationError, match="must not cite"):
+            FinalResponse(
+                status=ResponseStatus.ABSTAINED,
+                abstain_reason=AbstainReason.NO_RELEVANT_POLICY,
+                **self._kwargs(),
+            )
+
+    def test_an_incomplete_run_must_require_review(self):
+        # UNAVAILABLE means the checks did not finish. It must never read as cleared.
+        with pytest.raises(ValidationError, match="UNAVAILABLE must require human review"):
+            FinalResponse(status=ResponseStatus.UNAVAILABLE, **self._kwargs(policy_sources=[]))
+
+    def test_the_valid_combinations_still_construct(self):
+        FinalResponse(status=ResponseStatus.ANSWERED, **self._kwargs())
+        FinalResponse(
+            status=ResponseStatus.ABSTAINED,
+            abstain_reason=AbstainReason.NO_RELEVANT_POLICY,
+            **self._kwargs(policy_sources=[]),
+        )
+        FinalResponse(
+            status=ResponseStatus.PENDING_HUMAN_REVIEW,
+            **self._kwargs(
+                human_review_required=True,
+                guardrail=GuardrailDecision(requires_human_review=True),
+            ),
+        )

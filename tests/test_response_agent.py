@@ -27,6 +27,7 @@ from app.contracts import (
     RiskStatus,
 )
 from app.llm.base import LLMError
+from app.guardrail import scan
 from app.llm.stub import FailingLLMClient, StubLLMClient
 
 QUESTION = AskRequest(question="A customer wants to close their account. What do I do?")
@@ -61,7 +62,7 @@ REVIEW = GuardrailDecision(
 def finding(**overrides) -> PolicyFinding:
     base = {
         "answerable": True,
-        "proposed_guidance": "Account closure requires approval by the Financial Crime Duty Officer.",
+        "proposed_guidance": "Record a fraud case in the case management system within 30 minutes.",
         "required_procedures": ["Record a case in the case management system"],
         "cited_policy_ids": ["FRAUD-ESC-002"],
         "evidence": [EVIDENCE],
@@ -331,3 +332,61 @@ class TestProviderFailure:
         response_agent = ResponseAgent(llm=FailingLLMClient("groq timed out"))
         with pytest.raises(LLMError, match="groq timed out"):
             response_agent.respond(QUESTION, finding(), SAFE_RISK, CLEAR)
+
+
+class TestCannotIntroduceNewActions:
+    """The guardrail decides on the finding; staff read the composed answer.
+
+    Without a check on the composed text, the last model in the chain could write
+    a consequential action into the answer that no control ever evaluated. These
+    tests are the ones that would have caught it.
+    """
+
+    ROGUE_DRAFTS = {
+        "close": "Acknowledge the complaint, then close the account for the customer.",
+        "transfer": "Acknowledge the complaint, then transfer the funds to the new account.",
+        "credit": "Acknowledge the complaint, then approve the credit limit increase.",
+        "block": "Acknowledge the complaint, then freeze the account while you check.",
+        "passive": "The account will be closed once you have acknowledged the complaint.",
+    }
+
+    @pytest.mark.parametrize("label", list(ROGUE_DRAFTS))
+    def test_an_action_the_guardrail_never_saw_is_discarded(self, label):
+        rogue = ResponseDraft(answer=self.ROGUE_DRAFTS[label])
+        response = agent(rogue).respond(QUESTION, finding(), SAFE_RISK, CLEAR)
+        assert response.answer == finding().proposed_guidance
+        assert self.ROGUE_DRAFTS[label] not in response.answer
+
+    @pytest.mark.parametrize("label", list(ROGUE_DRAFTS))
+    def test_the_published_answer_never_carries_an_uncleared_action(self, label):
+        # The property that matters, stated over the output rather than the draft.
+        response = agent(ResponseDraft(answer=self.ROGUE_DRAFTS[label])).respond(
+            QUESTION, finding(), SAFE_RISK, CLEAR
+        )
+        cleared = set(response.guardrail.detected_actions)
+        assert not {rule.action for rule in scan(response.answer)} - cleared
+
+    def test_an_answered_response_can_never_describe_a_consequential_action(self):
+        response = agent(ResponseDraft(answer=self.ROGUE_DRAFTS["close"])).respond(
+            QUESTION, finding(), SAFE_RISK, CLEAR
+        )
+        assert response.status is ResponseStatus.ANSWERED
+        assert scan(response.answer) == []
+        assert response.human_review_required is False
+
+    def test_an_action_the_guardrail_already_cleared_is_kept(self):
+        # Not a blanket ban on the words: guidance that was reviewed may say so.
+        drafted = "Account closure requires the Financial Crime Duty Officer to approve it."
+        response = agent(ResponseDraft(answer=drafted)).respond(
+            QUESTION,
+            finding(proposed_guidance="Closing an account requires the Duty Officer to approve it."),
+            REVIEW_RISK,
+            REVIEW,
+        )
+        assert drafted in response.answer
+        assert response.human_review_required is True
+
+    def test_ordinary_prose_is_left_alone(self):
+        drafted = "Acknowledge the complaint to the customer within one business day."
+        response = agent(ResponseDraft(answer=drafted)).respond(QUESTION, finding(), SAFE_RISK, CLEAR)
+        assert response.answer == drafted

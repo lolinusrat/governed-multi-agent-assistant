@@ -16,6 +16,8 @@ Its boundaries are enforced by code, not only by the prompt:
 
 from __future__ import annotations
 
+import re
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.contracts import AbstainReason, AskRequest, PolicyEvidence, PolicyFinding, RetrievalResult
@@ -57,6 +59,11 @@ POLICY EVIDENCE:
 {evidence}
 
 Produce your finding from this evidence alone."""
+
+# Every policy in the corpus ends with a section listing what it does not cover.
+# When that section is the best match, the corpus is telling us not to answer -
+# and that is too important to leave to the model noticing it in the prompt.
+_OUT_OF_SCOPE_HEADING = re.compile(r"matters not covered|not covered by this policy", re.I)
 
 _EVIDENCE_TEMPLATE = """\
 [{index}] policy_id: {policy_id}
@@ -114,6 +121,17 @@ class PolicyAgent:
                 notes=retrieval.explanation,
             )
 
+        if self._is_disowned(retrieval):
+            # Decided before the model is consulted, so it cannot be talked out of.
+            top = retrieval.evidence[0]
+            return self._abstain(
+                reason=AbstainReason.OUT_OF_POLICY_SCOPE,
+                notes=(
+                    f"The best match was {top.policy_id} section {top.section!r}, which states "
+                    "this topic is not covered by the policy. Refer the question to the policy owner."
+                ),
+            )
+
         draft = self.llm.structured(
             system=SYSTEM_PROMPT,
             user=_USER_TEMPLATE.format(
@@ -125,7 +143,15 @@ class PolicyAgent:
         )
         return self._finalise(draft, retrieval)
 
-    # -- deterministic post-checks ------------------------------------------ #
+    # -- deterministic checks ------------------------------------------------ #
+
+    @staticmethod
+    def _is_disowned(retrieval: RetrievalResult) -> bool:
+        """True when the corpus's own best answer is 'this policy does not cover it'."""
+        return bool(retrieval.evidence) and bool(
+            _OUT_OF_SCOPE_HEADING.search(retrieval.evidence[0].section)
+        )
+
 
     def _finalise(self, draft: PolicyDraft, retrieval: RetrievalResult) -> PolicyFinding:
         """Apply the checks that do not depend on the model behaving well."""

@@ -18,6 +18,7 @@ from app.retrieval import (
     PolicyRetriever,
     load_corpus,
     parse_policy_document,
+    stem,
     tokenize,
 )
 
@@ -63,11 +64,32 @@ class TestCorpusParsing:
 
 
 class TestTokenize:
-    def test_drops_stopwords_and_singularises(self):
-        assert tokenize("What are the time limits for disputes?") == ["time", "limit", "dispute"]
+    def test_drops_stopwords_and_stems(self):
+        assert tokenize("What are the time limits for disputes?") == ["time", "limit", "disput"]
 
     def test_keeps_numeric_thresholds(self):
         assert "500" in tokenize("provisional credit of 500 AUD")
+
+    @pytest.mark.parametrize(
+        "words",
+        [
+            ("close", "closed", "closing"),
+            ("lodge", "lodged", "lodging"),
+            ("freeze", "freezing"),
+            ("approve", "approved", "approving"),
+            ("dispute", "disputes"),
+            ("policy", "policies"),
+        ],
+    )
+    def test_inflections_of_a_word_share_a_stem(self, words):
+        # The reason this exists: a question asking to "close" an account has to
+        # match a policy that says "closing", or the section with the answer in it
+        # never reaches the agents.
+        assert len({stem(w) for w in words}) == 1, {w: stem(w) for w in words}
+
+    @pytest.mark.parametrize("word", ["business", "access", "process", "address"])
+    def test_double_s_words_are_left_alone(self, word):
+        assert stem(word) == word
 
 
 class TestSuccessfulRetrieval:
@@ -111,7 +133,7 @@ class TestSuccessfulRetrieval:
 
     def test_respects_the_result_limit(self, retriever):
         result = retriever.search("customer policy approval review")
-        assert len(result.evidence) <= 4
+        assert len(result.evidence) <= retriever.max_results
         assert len(retriever.search("customer policy approval review", limit=1).evidence) == 1
 
     def test_spreads_citations_across_documents(self, retriever):
@@ -189,3 +211,37 @@ class TestRetrieverInterface:
         backend: PolicyRetriever = FakeVectorRetriever()
         assert isinstance(backend, PolicyRetriever)
         assert backend.search("anything").sufficient is False
+
+
+class TestGoldenQuestions:
+    """Each question must retrieve the section that actually contains its answer.
+
+    Ranking tests elsewhere check that the right *policy* comes back. These check
+    the right *section* does, which is what the answer is built from - a policy
+    can rank first on a question its retrieved sections cannot answer.
+    """
+
+    @pytest.mark.parametrize(
+        ("question", "policy_id", "section_number"),
+        [
+            (
+                "How long does a customer have to lodge a card transaction dispute?",
+                "CARD-DISP-001",
+                "3",
+            ),
+            (
+                "What approval is needed to close an account linked to a fraud case?",
+                "FRAUD-ESC-002",
+                "5",
+            ),
+            ("How quickly must I acknowledge a customer complaint?", "COMP-HAND-004", "2"),
+            ("What is the timeframe for a privacy access request?", "PRIV-DATA-003", "4"),
+        ],
+    )
+    def test_the_answering_section_is_retrieved(
+        self, retriever, question, policy_id, section_number
+    ):
+        result = retriever.search(question)
+        assert result.sufficient is True
+        sections = [e.section for e in result.evidence if e.policy_id == policy_id]
+        assert any(s.startswith(f"{section_number}. ") for s in sections), sections

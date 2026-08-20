@@ -51,8 +51,13 @@ ACTION_RULES: tuple[ActionRule, ...] = (
     _rule(
         "transfer_funds",
         ConsequentialAction.TRANSFER_FUNDS,
+        # Active: "transfer the funds". Passive and reordered: "the funds will be
+        # transferred", "send the money to". Model prose uses all three.
         r"\b(?:transfer|transferring|transferred|move|moving|remit\w*|disburse\w*)\b[^.]{0,40}"
         r"\b(?:funds?|money|balance|amount|payment)\b"
+        r"|\b(?:funds?|money|balance|payment|amount)\b[^.]{0,40}"
+        r"\b(?:transferr?\w*|moved|remitted|disbursed|sent|paid out|credited to)\b"
+        r"|\b(?:send|sending|pay|paying)\b[^.]{0,25}\b(?:funds?|money|payment|amount)\b"
         r"|\bfunds? transfer\b",
         "The guidance would move money.",
     ),
@@ -61,20 +66,23 @@ ACTION_RULES: tuple[ActionRule, ...] = (
         ConsequentialAction.APPROVE_CREDIT,
         r"\b(?:approv\w+|grant\w*|extend\w*|increas\w*)\b[^.]{0,40}"
         r"\b(?:credit|loan|overdraft|facility|credit limit)\b"
-        r"|\b(?:credit|loan|overdraft)\b[^.]{0,30}\b(?:approv\w+|grant\w*)\b",
+        r"|\b(?:credit|loan|overdraft|facility|credit limit)\b[^.]{0,40}"
+        r"\b(?:approv\w+|grant\w*|extend\w*|increas\w*)\b",
         "The guidance would approve or extend credit.",
     ),
     _rule(
         "close_account",
         ConsequentialAction.CLOSE_ACCOUNT,
-        r"\b(?:clos\w+|terminat\w+|cancel\w*)\b[^.]{0,30}\baccount\b"
+        r"\b(?:clos\w+|terminat\w+|cancel\w*|shut\w*)\b[^.]{0,30}\baccount\b"
+        r"|\baccount\b[^.]{0,30}\b(?:clos\w+|terminat\w+|cancell?\w*|shut down)\b"
         r"|\baccount clos\w+\b",
         "The guidance would close an account.",
     ),
     _rule(
         "block_account",
         ConsequentialAction.BLOCK_ACCOUNT,
-        r"\b(?:block\w*|unblock\w*|freez\w+|restrict\w*|suspend\w*)\b[^.]{0,30}\baccount\b"
+        r"\b(?:block\w*|unblock\w*|freez\w+|frozen|restrict\w*|suspend\w*)\b[^.]{0,30}\baccount\b"
+        r"|\baccount\b[^.]{0,30}\b(?:block\w*|unblock\w*|freez\w+|frozen|restrict\w*|suspend\w*)\b"
         r"|\baccount (?:block|freeze|restriction|suspension)\b",
         "The guidance would block, freeze or restrict an account.",
     ),
