@@ -43,6 +43,23 @@ STATUS_HELP = {
 # there was no guidance to find fault with.
 NO_GUIDANCE_ISSUED = {"ABSTAINED", "UNAVAILABLE"}
 
+# Presentation only. The wire contract keeps the enum values; these are what a
+# member of staff reads. `st.metric` renders its value on one line and truncates
+# rather than wrapping, so these are rendered as plain text instead.
+STATUS_LABELS = {
+    "ANSWERED": "Answered",
+    "PENDING_HUMAN_REVIEW": "Pending Human Review",
+    "ABSTAINED": "Abstained",
+    "REJECTED": "Rejected",
+    "UNAVAILABLE": "Unavailable",
+}
+
+RISK_LABELS = {
+    "SAFE": "Safe",
+    "HUMAN_REVIEW_REQUIRED": "Human Review Required",
+    "REJECTED": "Rejected",
+}
+
 ABSTAIN_REASONS = {
     "NO_RELEVANT_POLICY": "No relevant policy found",
     "INSUFFICIENT_EVIDENCE": "Insufficient policy evidence",
@@ -99,6 +116,12 @@ def api_health() -> dict | None:
 # --------------------------------------------------------------------------- #
 
 
+def _stat(column, label: str, value: str) -> None:
+    """A label/value pair that wraps instead of truncating."""
+    column.caption(label)
+    column.markdown(f"**{value}**")
+
+
 def render_result(question: str, body: dict) -> None:
     st.divider()
     st.caption("Question")
@@ -109,12 +132,15 @@ def render_result(question: str, body: dict) -> None:
     guidance_issued = status not in NO_GUIDANCE_ISSUED
     reason = ABSTAIN_REASONS.get(body.get("abstain_reason") or "", "")
 
+    risk_status = body.get("risk_status", "")
     outcome, risk_col, review_col = st.columns(3)
-    outcome.metric("Outcome", status.replace("_", " ").title())
-    risk_col.metric(
-        "Guidance risk", body.get("risk_status", "—") if guidance_issued else "N/A"
+    _stat(outcome, "Outcome", STATUS_LABELS.get(status, status))
+    _stat(
+        risk_col,
+        "Guidance risk",
+        RISK_LABELS.get(risk_status, risk_status or "—") if guidance_issued else "N/A",
     )
-    review_col.metric("Human review", "Required" if review else "Not required")
+    _stat(review_col, "Human review", "Required" if review else "Not required")
 
     if not guidance_issued:
         st.caption(
@@ -126,7 +152,7 @@ def render_result(question: str, body: dict) -> None:
         st.warning("**Human review required.** Do not act on this until a person has approved it.")
 
     level, note = STATUS_HELP.get(status, ("info", status))
-    headline = status.replace("_", " ").title()
+    headline = STATUS_LABELS.get(status, status)
     detail = f"{reason}." if reason else note
     getattr(st, level)(f"**{headline}** — {detail}")
 
