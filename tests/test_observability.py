@@ -125,7 +125,9 @@ class TestSpans:
                 raise LLMError("provider down")
         failed = log.records[-1]
         assert failed["status"] == "failed"
-        assert "provider down" in failed["error"]
+        # The exception type is diagnostic; its message can carry provider detail.
+        assert failed["error_type"] == "LLMError"
+        assert "provider down" not in json.dumps(failed)
         assert "latency_ms" in failed
 
 
@@ -308,7 +310,8 @@ class TestEndToEndTrail:
         assert response.status_code == 503
         failed = [r for r in log.records if r["status"] == "failed"]
         assert failed and all(r["component"] == "policy_agent" for r in failed)
-        assert any("groq timed out" in r.get("error", "") for r in failed)
+        assert any(r.get("cause") == "timeout" or r.get("error_type") == "LLMError" for r in failed)
+        assert "groq timed out" not in json.dumps(log.records)
         assert any(r["event"] == "response_returned" for r in log.records)
 
     def test_an_invalid_request_is_still_traced(self, retriever):

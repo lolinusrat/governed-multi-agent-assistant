@@ -242,15 +242,15 @@ class TestSecretHygiene:
         assert "gsk_zzzzzzzzzzzzzzzzzzzz" not in cleaned
 
     def test_an_error_carrying_a_key_is_scrubbed_before_it_is_published(self, client_factory):
-        # A provider error can quote the request it failed on. It must not reach
-        # the caller with a credential in it.
+        # Belt and braces. The provider message no longer reaches the caller at
+        # all, and redaction stands behind that in case it ever does again.
         key = "gsk_leakedkeyvalue0123456789abcd"
         client = client_factory(FailingLLMClient(f"401 unauthorized for key {key}"))
         client.app.dependency_overrides[get_settings] = lambda: Settings(GROQ_API_KEY=key)
         with client as c:
             payload = c.post("/ask", json={"question": COMPLAINT_QUESTION}).text
         assert key not in payload
-        assert "[redacted]" in payload
+        assert "401 unauthorized" not in payload
 
     def test_no_endpoint_publishes_the_environment(self, client):
         for path in ("/health", "/openapi.json"):

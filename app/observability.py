@@ -157,12 +157,14 @@ class EventLog:
         try:
             yield extra
         except Exception as exc:
+            # Only the exception type. The message can carry provider, quota or
+            # account detail, and the audit trail is not the place for it.
             self.emit(
                 component,
                 event,
                 status="failed",
                 latency_ms=(perf_counter() - started) * 1000,
-                error=f"{type(exc).__name__}: {exc}",
+                error_type=type(exc).__name__,
                 **extra,
             )
             raise

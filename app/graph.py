@@ -19,6 +19,7 @@ that anything was cleared.
 
 from __future__ import annotations
 
+import logging
 import operator
 from typing import Annotated, Any, TypedDict
 from uuid import uuid4
@@ -63,6 +64,35 @@ class GraphState(TypedDict, total=False):
     audit: Annotated[list[AuditEvent], operator.add]
 
 
+logger = logging.getLogger("governed_assistant.graph")
+
+# Staff see a category, never the provider's words. A rate-limit message names the
+# organisation, the model, the quota and a billing URL; none of that helps a member
+# of staff decide what to do, and all of it is internal infrastructure detail.
+_FAILURE_MESSAGES = {
+    "rate_limited": "The assistant is temporarily over its request limit.",
+    "timeout": "The assistant did not get a response in time.",
+    "authentication": "The assistant could not authenticate to a service it depends on.",
+    "unavailable": "The assistant could not reach a service it depends on.",
+}
+
+
+def classify_failure(exc: Exception) -> str:
+    """Bucket a failure into a cause staff and operators can both act on.
+
+    The classification is what travels: it is enough to diagnose a run from the
+    audit trail without putting vendor, quota or account detail in it.
+    """
+    text = f"{type(exc).__name__}: {exc}".lower()
+    if "429" in text or "rate limit" in text or "quota" in text or "tokens per" in text:
+        return "rate_limited"
+    if "timeout" in text or "timed out" in text:
+        return "timeout"
+    if "401" in text or "403" in text or "unauthor" in text or "api key" in text:
+        return "authentication"
+    return "unavailable"
+
+
 def _request(state: GraphState) -> AskRequest:
     return AskRequest(question=state["question"], staff_role=state.get("staff_role", "branch_staff"))
 
@@ -78,7 +108,17 @@ def _audit(state: GraphState, stage: str, deterministic: bool, summary: str, **d
 
 
 def unavailable(state: GraphState, stage: str, exc: Exception) -> FinalResponse:
-    """The fail-closed response. An incomplete run never reads as cleared."""
+    """The fail-closed response. An incomplete run never reads as cleared.
+
+    Deliberately says nothing about the provider. The full exception goes to the
+    server log against this `trace_id`, where an operator can find it and a member
+    of staff cannot.
+    """
+    cause = classify_failure(exc)
+    logger.error(
+        "stage %s failed (trace_id=%s, cause=%s): %s", stage, state["trace_id"], cause, exc
+    )
+
     risk = RiskAssessment(
         status=RiskStatus.HUMAN_REVIEW_REQUIRED,
         reason=f"The {stage} stage failed, so the risk review did not complete.",
@@ -92,13 +132,15 @@ def unavailable(state: GraphState, stage: str, exc: Exception) -> FinalResponse:
         status=ResponseStatus.UNAVAILABLE,
         answer=(
             "The assistant could not complete its checks, so it has no answer for you.\n\n"
-            f"The {stage} stage failed: {exc}\n\n"
-            "Do not treat this as a green light. Escalate the question instead."
+            f"{_FAILURE_MESSAGES.get(cause, _FAILURE_MESSAGES['unavailable'])} "
+            f"The {stage} stage did not complete.\n\n"
+            "Do not treat this as a green light. Escalate the question instead. "
+            f"Quote reference {state['trace_id'][:8]} if you report it."
         ),
         recommended_next_steps=[
             "Do not act on this request without a policy answer.",
             "Escalate the question to your team leader or the relevant policy owner.",
-            "Report the failure so it can be investigated.",
+            f"Report the failure, quoting reference {state['trace_id'][:8]}.",
         ],
         policy_sources=[],
         risk_status=risk.status,
@@ -123,12 +165,15 @@ def _stage(name: str, log: EventLog):
                 with log.span(name, name):
                     return fn(state)
             except Exception as exc:  # noqa: BLE001 - the boundary is meant to be broad
-                log.emit(name, "decision", status="failed", error=f"{type(exc).__name__}: {exc}")
+                cause = classify_failure(exc)
+                log.emit(name, "decision", status="failed", cause=cause)
                 return {
+                    # `error` stays in process state for the API layer and tests. It is
+                    # never published: the response carries a category, the log a cause.
                     "error": f"{name}: {exc}",
                     "response": unavailable(state, name, exc),
                     "audit": [
-                        _audit(state, name, deterministic=True, summary=f"{name} failed", error=str(exc))
+                        _audit(state, name, deterministic=True, summary=f"{name} failed", cause=cause)
                     ],
                 }
 

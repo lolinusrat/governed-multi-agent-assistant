@@ -203,11 +203,14 @@ class TestControlledErrorHandling:
 
     def test_the_failure_is_named_in_the_state_and_the_audit_trail(self, retriever):
         state = assistant(retriever, FailingLLMClient("groq timed out")).run(COMPLAINT_QUESTION)
+        # In-process state keeps the detail; the audit trail keeps a cause. The
+        # provider's words stop at the process boundary.
         assert state["error"].startswith("policy_agent:")
         assert "groq timed out" in state["error"]
         failure = next(e for e in state["audit"] if "failed" in e.summary)
         assert failure.deterministic is True
-        assert "groq timed out" in failure.detail["error"]
+        assert failure.detail["cause"] == "timeout"
+        assert "groq timed out" not in str(failure.detail)
 
     def test_later_stages_do_not_run_after_a_failure(self, retriever):
         state = assistant(retriever, FailingLLMClient("down")).run(COMPLAINT_QUESTION)
@@ -235,7 +238,9 @@ class TestControlledErrorHandling:
         response = GovernedAssistant(retriever=BrokenRetriever(), llm=StubLLMClient()).ask("anything")
         assert response.status is ResponseStatus.UNAVAILABLE
         assert response.human_review_required is True
-        assert "policy corpus is unreadable" in response.answer
+        # Contained means contained: the internal message does not reach staff.
+        assert "policy corpus is unreadable" not in response.answer
+        assert "policy_agent stage did not complete" in response.answer
 
     @pytest.mark.parametrize("question", [CLOSE_QUESTION, COMPLAINT_QUESTION, UNCOVERED_QUESTION])
     def test_every_question_returns_a_response(self, retriever, question):
